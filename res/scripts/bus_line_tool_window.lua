@@ -236,7 +236,7 @@ local function buildStopsSection(ctx, state, onRowsChanged)
 	return section
 end
 
-local function buildNewLineTab(ctx, state, stops, vehicles)
+local function buildNewLineTab(ctx, state, stops, vehicles, refreshAll)
 	local layout = api.gui.layout.BoxLayout.new("VERTICAL")
 	layout:addItem(stops.comp)
 
@@ -339,7 +339,7 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 		ctx.addWork(function()
 			ctx.removeCircles()
 			ctx.updateCircle()
-			stops.refresh()
+			refreshAll()
 			buildButton:setEnabled(false, false)
 			state.nameEdited = false
 			state.lastSuggested = nil
@@ -352,7 +352,7 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 	return tab
 end
 
-local function buildEditLineTab(ctx, state, stops)
+local function buildEditLineTab(ctx, state, stops, refreshAll)
 	local layout = api.gui.layout.BoxLayout.new("VERTICAL")
 	layout:addItem(header(_("Line to edit")))
 	local pickRow = api.gui.layout.BoxLayout.new("HORIZONTAL")
@@ -450,6 +450,9 @@ end
 function windowModule.create(ctx)
 	local state = {}
 	local handles = {}
+	-- Tab builders that need to refresh both Stops sections (e.g. Reset) call this
+	-- instead of refreshing their own section directly, so nothing goes stale.
+	local function refreshAll() handles.refreshStops() end
 	local vehicles = buildVehicleSelectionPanel(ctx, state)
 	-- Each tab gets its own Stops section: a widget has one parent, so the two tabs
 	-- cannot share a single section's comp. Both sections read/write the same
@@ -457,8 +460,8 @@ function windowModule.create(ctx)
 	-- below drive both.
 	local newStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
 	local editStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
-	local newTab = buildNewLineTab(ctx, state, newStops, vehicles)
-	local editTab = buildEditLineTab(ctx, state, editStops)
+	local newTab = buildNewLineTab(ctx, state, newStops, vehicles, refreshAll)
+	local editTab = buildEditLineTab(ctx, state, editStops, refreshAll)
 
 	local tabs = api.gui.comp.TabWidget.new("NORTH")
 	tabs:addTab(api.gui.comp.TextView.new(_("New line")), newTab.comp)
