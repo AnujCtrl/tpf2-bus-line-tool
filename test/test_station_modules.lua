@@ -22,8 +22,13 @@ function t.inputs_are_not_mutated()
   local existing = { [1] = cargo() }
   local generated = { [1] = pax(), [2] = pax() }
   local merged = sm.merge(existing, generated)
-  assert(existing[2] == nil)
-  assert(merged[1] ~= existing[1] or merged[1].name == existing[1].name)
+  assert(merged ~= existing and merged ~= generated, "merge must return a new table")
+  assert(existing[2] == nil, "existing gained a key")
+  assert(existing[1].name == "station/street/cargo_platform.module", "existing entry changed")
+  assert(generated[1].name == "station/street/passenger_platform.module" and generated[2].name == "station/street/passenger_platform.module", "generated entries changed")
+  local count = 0
+  for _ in pairs(generated) do count = count + 1 end
+  assert(count == 2, "generated gained or lost keys")
 end
 
 function t.empty_existing_takes_all_generated()
