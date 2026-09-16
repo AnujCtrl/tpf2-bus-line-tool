@@ -499,6 +499,38 @@ local function findStreetEdgeForStation(station)
 	end
 	return api.engine.getComponent(station, api.type.ComponentType.STATION).terminals[1].vehicleNodeId.entity
 end
+
+-- Road path between two entities that are each either a station id or a street edge id.
+-- Returns the list from findPath ({entity=, index=} per lane edge), possibly empty.
+function pathFindingUtil.findRoadPathBetweenEntities(a, b, isTram)
+	local function isEdge(id) return util.getEdge(id) ~= nil end
+	local mode = isTram and api.type.enum.TransportMode.TRAM or api.type.enum.TransportMode.BUS
+	local startingEdges
+	if isEdge(a) then
+		startingEdges = pathFindingUtil.getStartingEdgesForEdge(a, mode)
+	else
+		startingEdges = pathFindingUtil.getStartingEdgesForEdge(findStreetEdgeForStation(a), mode)
+	end
+	local destNodes
+	if isEdge(b) then
+		local edge = util.getEdge(b)
+		local startPos = isEdge(a) and util.getEdgeMidPoint(a) or util.getStationPosition(a)
+		local targetNode = edge.node1
+		if util.distance(util.nodePos(edge.node0), startPos) > util.distance(util.nodePos(edge.node1), startPos) and not util.isOneWayStreet(b) then
+			targetNode = edge.node0
+		end
+		destNodes = pathFindingUtil.getDestinationNodesForEdge(b, mode, targetNode)
+	else
+		destNodes = pathFindingUtil.getDestinationNodesForStation(b)
+	end
+	local ok, answer = pcall(pathFindingUtil.findPath, startingEdges, destNodes, { mode }, math.huge)
+	if not ok then
+		trace("findRoadPathBetweenEntities failed", answer)
+		return {}
+	end
+	return answer
+end
+
 function pathFindingUtil.findRoadPathBetweenStationAndNode(station, node, nodePos )
 	local destNodes = pathFindingUtil.getDestinationNodesForStation(station)
 	if (not api.engine.entityExists(node) or not api.engine.getComponent(node, api.type.ComponentType.BASE_NODE)) and nodePos then 

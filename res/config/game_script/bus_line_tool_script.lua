@@ -9,6 +9,8 @@ local vehicleUtil = require("bus_line_tool_vehicle_util")
 local windowModule = require("bus_line_tool_window")
 local overlay = require("bus_line_tool_overlay")
 local trace = util.trace
+local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local routeCache = {}
 
 local workItems = {}
 
@@ -110,11 +112,47 @@ local function updateCircle()
 		end
 		overlay.setStops(stops)
 		if #stops > 1 then
+			local isTram = guiState.ui and guiState.ui.isTram() or false
+			local previewParams = {
+				addBusLanes = guiState.ui and guiState.ui.addBusLanes() or false,
+				tramTrackType = isTram and util.getCurrentTramTrackType() or 0,
+			}
+			local colour = guiState.ui and guiState.ui.lineColour() or { 0.5, 0.5, 0.5 }
+			local lineColour = { colour[1], colour[2], colour[3], 0.3 } -- 0..1 channels, like lineColors
+			local edges, seen, missing = {}, {}, {}
+			local pairsToDraw = #stops - 1
+			if guiState.isCircle then pairsToDraw = #stops end
+			for i = 1, pairsToDraw do
+				local a = stops[i].id
+				local b = stops[i % #stops + 1].id
+				local key = a .. ":" .. b .. ":" .. tostring(isTram)
+				if not routeCache[key] then
+					routeCache[key] = pathFindingUtil.findRoadPathBetweenEntities(a, b, isTram)
+				end
+				local path = routeCache[key]
+				if #path == 0 then
+					missing[#missing + 1] = i .. "→" .. (i % #stops + 1)
+				end
+				for _, e in ipairs(path) do
+					if not seen[e.entity] then
+						seen[e.entity] = true
+						local c = routeBuilder.edgeNeedsUpgrade(e.entity, previewParams) and overlay.UPGRADE_COLOUR or lineColour
+						edges[#edges + 1] = { edgeId = e.entity, colour = c }
+					end
+				end
+			end
+			overlay.setRouteEdges(edges)
 			local points = {}
 			for i, stop in ipairs(stops) do points[i] = stop.pos end
 			if guiState.isCircle then points[#points + 1] = stops[1].pos end
-			overlay.setFallbackPolyline(points, overlay.FALLBACK_COLOUR)
+			if #missing > 0 then
+				overlay.setFallbackPolyline(points, overlay.FALLBACK_COLOUR)
+				if guiState.ui then guiState.ui.setStatus(_("No road path between stops ") .. table.concat(missing, ", ")) end
+			else
+				overlay.setFallbackPolyline({}, nil)
+			end
 		else
+			overlay.setRouteEdges({})
 			overlay.setFallbackPolyline({}, nil)
 		end
 	end
@@ -173,6 +211,7 @@ local function removeCircles()
 	guiState.selectedEntities = {}
 	guiState.colours = {}
 	guiState.stopMeta = {}
+	routeCache = {}
 
 end
 

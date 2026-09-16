@@ -4,6 +4,7 @@ local util = require("bus_line_tool_base_util")
 local paramHelper = require("bus_line_tool_base_param_helper")
 local vehicleUtil = require("bus_line_tool_vehicle_util")
 local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local upgradeRules = require("bus_line_tool_upgrade_rules")
 --local connectEval = require("bus_line_tool_new_connections_evaluation")
 local vec3 = require("vec3")
 local vec2 = require("vec2")
@@ -2089,10 +2090,9 @@ function routeBuilder.tryRoadRouteForUpgrade(routeInfo, callback, params)
 			preferredStreetType = entity.streetEdge.streetType 
 		end
 		entity.streetEdge.streetType = preferredStreetType
-		if not params.tramOnlyUpgrade then 
-			entity.streetEdge.hasBus = entity.streetEdge.hasBus or params.addBusLanes 
-		end
-		entity.streetEdge.tramTrackType = math.max(entity.streetEdge.tramTrackType, params.tramTrackType)
+		local target = upgradeRules.targets(entity.streetEdge, params)
+		entity.streetEdge.hasBus = target.hasBus
+		entity.streetEdge.tramTrackType = target.tramTrackType
 		return entity
 	end
 	
@@ -2516,7 +2516,7 @@ end
 function routeBuilder.buildOrUpgradeForBusRoute(station1, station2, callback,params)
 	--local params = paramHelper.getDefaultRouteBuildingParams(false, false)
 	local result = pathFindingUtil.findRoadPathStations(station1, station2)
-	if #result >0then 
+	if #result >0 then 
 		local count = 0 
 		local success = false
 		repeat
@@ -2530,6 +2530,13 @@ function routeBuilder.buildOrUpgradeForBusRoute(station1, station2, callback,par
 	else 
 		routeBuilder.buildRoadRouteBetweenStations({station1, station2}, callback, params, hasEntranceB)
 	end
+end
+
+-- Preview helper: true when building with `params` would change this street edge.
+function routeBuilder.edgeNeedsUpgrade(edgeId, params)
+	local street = api.engine.getComponent(edgeId, api.type.ComponentType.BASE_EDGE_STREET)
+	if not street then return false end
+	return upgradeRules.needsUpgrade({ hasBus = street.hasBus, tramTrackType = street.tramTrackType }, params)
 end
 
 return routeBuilder
