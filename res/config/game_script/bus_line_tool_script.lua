@@ -10,6 +10,7 @@ local windowModule = require("bus_line_tool_window")
 local overlay = require("bus_line_tool_overlay")
 local trace = util.trace
 local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local naming = require("bus_line_tool_naming")
 local routeCache = {}
 
 local workItems = {}
@@ -256,7 +257,44 @@ local mouseListener = function(MouseEvent)
 		err)
 	end
 	return wasHandled
-end 
+end
+
+local function townNameForEntity(entityId)
+	local townId
+	if util.getEdge(entityId) then
+		local town = util.searchForNearestEntity(util.getEdgeMidPoint(entityId), math.huge, "TOWN")
+		return town and town.name
+	end
+	local ok, id = pcall(api.engine.system.stationSystem.getTown, entityId)
+	if ok and id and id ~= -1 then
+		local name = api.engine.getComponent(id, api.type.ComponentType.NAME)
+		return name and name.name
+	end
+	return nil
+end
+
+local function existingLineNames()
+	local names = {}
+	for _, lineId in pairs(api.engine.system.lineSystem.getLines()) do
+		local name = api.engine.getComponent(lineId, api.type.ComponentType.NAME)
+		if name then names[#names + 1] = name.name end
+	end
+	return names
+end
+
+local function suggestedLineName()
+	local towns = {}
+	for i, entityId in ipairs(guiState.selectedEntities) do
+		local ok, town = pcall(townNameForEntity, entityId)
+		towns[i] = (ok and town) or false -- false, not nil: keeps the list without holes
+	end
+	return naming.suggest({
+		carrier = guiState.ui and guiState.ui.isTram() and _("Tram") or _("Bus"),
+		towns = towns,
+		isCircle = guiState.isCircle or false,
+		existingNames = existingLineNames(),
+	})
+end
 
 local function createComponents()
 	local gameBar = api.gui.util.getById("gameInfo.layout")
@@ -277,7 +315,7 @@ local function createComponents()
 		onEditLoad = function(lineId) end,   -- filled in Task 8
 		onEditApply = function(param) end,  -- filled in Task 8
 		onLineListNeeded = function() return {} end, -- filled in Task 8
-		onNameNeeded = function() return "" end,     -- filled in Task 6
+		onNameNeeded = suggestedLineName,
 		colourDefault = function()
 			local colours = api.res.getBaseConfig().gui.lineColors
 			local c = colours[math.random(1, #colours)]

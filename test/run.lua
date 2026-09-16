@@ -7,6 +7,7 @@ local files = {
   "test_discovery",
   "test_geometry",
   "test_upgrade_rules",
+  "test_naming",
 }
 
 local passed, failed = 0, 0

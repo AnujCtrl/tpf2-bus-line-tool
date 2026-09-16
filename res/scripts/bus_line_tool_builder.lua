@@ -304,12 +304,21 @@ local function setupLine(positions, param, isCircleReturn)
 			line.stops[1+#line.stops]=createStopForStation(returnStops[i])
 		end 
 	end 
-	local lineCount = #api.engine.system.lineSystem.getLines() 
-	local name = townName.." ".._("line").." "..tostring(lineCount+1)
+	local lineCount = #api.engine.system.lineSystem.getLines()
+	local name = param.lineName
+	if not name or name == "" then
+		name = townName.." ".._("line").." "..tostring(lineCount+1)
+	end
+	local colour
+	if param.lineColour and param.lineColour[1] then
+		colour = api.type.Vec3f.new(param.lineColour[1], param.lineColour[2], param.lineColour[3])
+	else
+		colour = lineColorFn()
+	end
 	usedTerminals = {}
 	if #line.stops > 1 then
 		trace("Creating line for bus stop")
-		api.cmd.sendCommand(api.cmd.make.createLine(name, lineColorFn() , game.interface.getPlayer(), line), 
+		api.cmd.sendCommand(api.cmd.make.createLine(name, colour, game.interface.getPlayer(), line),
 			function(res, success) 
 				trace("Result of create line command was",success)
 				if success then 
