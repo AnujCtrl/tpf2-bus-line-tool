@@ -131,6 +131,7 @@ local function buildVehicleSelectionPanel(ctx, state)
 					ctx.addWork(function()
 						vehicleConfig = vehicleUtil.copyConfig(vehicleUtil.createVehicleConfig(vehicle.modelId))
 						populateIcon(vehicle.modelId)
+						ctx.guiState.needsRedrawRoute = true
 					end)
 				end)
 				buttonGroup:add(toggleButton)
@@ -158,6 +159,7 @@ local function buildVehicleSelectionPanel(ctx, state)
 			cancelButton:onClick(function() reset(); window:close() end)
 		end
 		populateIcon(modelId)
+		ctx.guiState.needsRedrawRoute = true
 	end
 
 	function panel.getVehicleConfig() return vehicleConfig end
@@ -520,6 +522,12 @@ function windowModule.create(ctx)
 	function handles.lineColour() return newTab.lineColour() end
 	function handles.selectedRow() return ctx.guiState.selectedRow or -1 end
 	function handles.refreshVehicles() vehicles.refresh(newTab.isTram() and 1 or 0) end
+	function handles.isElectricTramSelected()
+		local config = vehicles.getVehicleConfig()
+		if not config then return false end
+		local ok, electric = pcall(vehicleUtil.isElectricTram, config)
+		return ok and electric or false
+	end
 	function handles.refreshLineList() editTab.refreshLineList() end
 	function handles.setEditApplyEnabled(b) editTab.applyButton:setEnabled(b, false) end
 	return handles

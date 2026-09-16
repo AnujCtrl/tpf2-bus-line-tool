@@ -102,6 +102,14 @@ end
 	end 
  end 	
  
+-- Tram track type the preview should require: mirrors the build rule (electric tram + catenary year).
+local function previewTramTrackType()
+	if not (guiState.ui and guiState.ui.isTram()) then return 0 end
+	if guiState.ui.mode() == "edit" then return util.getCurrentTramTrackType() end
+	local catenary = util.year() >= api.res.getBaseConfig().tramCatenaryYearFrom
+	return (catenary and guiState.ui.isElectricTramSelected()) and 2 or 1
+end
+
 local function updateCircle()
 	if guiState.needsRedrawRoute then
 		guiState.needsRedrawRoute = false -- do upfront to avoid repeated exceptions
@@ -115,7 +123,7 @@ local function updateCircle()
 			local isTram = guiState.ui and guiState.ui.isTram() or false
 			local previewParams = {
 				addBusLanes = guiState.ui and guiState.ui.addBusLanes() or false,
-				tramTrackType = isTram and util.getCurrentTramTrackType() or 0,
+				tramTrackType = previewTramTrackType(),
 			}
 			local colour = guiState.ui and guiState.ui.lineColour() or { 0.5, 0.5, 0.5 }
 			local lineColour = { colour[1], colour[2], colour[3], 0.3 } -- 0..1 channels, like lineColors
