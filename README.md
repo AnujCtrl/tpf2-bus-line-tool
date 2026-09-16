@@ -39,3 +39,6 @@ See `docs/superpowers/specs/2026-09-16-bus-line-tool-fork-design.md`.
 - Stop numbers are drawn as seven-segment digits on the terrain because scripts cannot draw text in the world.
 - Street widening that a build would perform is not shown in the preview; only bus lanes and tram tracks are highlighted.
 - Toggling "Circle line" after picking stops does not refresh the suggested name until the next stop change.
+- Switching from the Edit line tab back to New line discards the loaded line and its stops.
+- A stop added at an existing station that has no free terminal gets an extra platform where the station layout allows it; otherwise it shares terminal 0.
+- On maps with regional vehicle restrictions, modded buses and trams whose model path lacks the region name may be filtered out of the chooser.

@@ -23,10 +23,10 @@ end
 local function addDelayedWork(work) 
 	table.insert(workItems, 1, work)
 end 
+-- Every log line the README tells the user to grep for starts with "bus_line_tool:".
 local function err(x)
-	print("An error was caught",x)
+	print("bus_line_tool: error " .. tostring(x))
 	print(debug.traceback())
-	 
 end  
 local function standardCallback(res, success) 
 	trace("command was completed, success= ",success)
@@ -238,20 +238,29 @@ local mouseListener = function(MouseEvent)
 				guiState.needsRedrawRoute = true
 				local entityId = guiState.entity.id
 				trace("Processing mouseEvent the selected entity was ", entityId)
+				local mode = guiState.ui and guiState.ui.mode() or "new"
 				local idx = util.indexOf(guiState.selectedEntities, entityId)
-				if idx ~= -1 then --treat as deselection
+				-- Only a new line deselects on a second click. An edited line may legitimately
+				-- visit the same station twice (A-B-C-B), so in edit mode a click always inserts;
+				-- rows are removed with the row's own remove button.
+				if mode == "new" and idx ~= -1 then --treat as deselection
 					table.remove(guiState.selectedEntities, idx)
 					table.remove(guiState.colours, idx)
 					table.remove(guiState.stopMeta, idx)
 				else
 					local colour = nextColour()
 					local insertAt = #guiState.selectedEntities + 1
-					if guiState.ui and guiState.ui.mode() == "edit" and guiState.ui.selectedRow() >= 0 then
+					if mode == "edit" and guiState.ui.selectedRow() >= 0 then
 						insertAt = math.min(guiState.ui.selectedRow() + 2, #guiState.selectedEntities + 1)
 					end
+					-- "pending" means a stop that still has to be built: only a street edge added
+					-- to an existing line is. New-line stops are all built by Build, so they draw
+					-- at the full marker alpha.
+					local meta = {}
+					if mode == "edit" and util.getEdge(entityId) ~= nil then meta = { pending = true } end
 					table.insert(guiState.selectedEntities, insertAt, entityId)
 					table.insert(guiState.colours, insertAt, colour)
-					table.insert(guiState.stopMeta, insertAt, { pending = true })
+					table.insert(guiState.stopMeta, insertAt, meta)
 				end
 				addWork(function() guiState.ui.refreshStops() end)
 				wasHandled = true
@@ -394,7 +403,14 @@ function data()
 				guiState.isInit = true -- in case of exception don't keep trying
 			end
 			if guiState.isActive then 
-				xpcall(updateCircle, err)
+				-- An overlay failure would otherwise leave stale zones on the map with no hint why.
+				xpcall(updateCircle, function(x)
+					err(x)
+					pcall(overlay.clear)
+					if guiState.ui then
+						pcall(function() guiState.ui.setStatus(_("Overlay error: ") .. tostring(x)) end)
+					end
+				end)
 			end 
 			if #workItems > 0 then
 				xpcall(table.remove(workItems, #workItems), err)  

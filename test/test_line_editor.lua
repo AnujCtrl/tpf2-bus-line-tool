@@ -68,4 +68,28 @@ function t.successor_of_the_last_stop_wraps_to_the_first()
   assert(le.successorChanged(plan, 2, 3) == false) -- A -> B untouched
 end
 
+-- How many free terminals a station must have to serve a stop, mirroring createBusLine.
+function t.end_stop_of_a_there_and_back_line_needs_one_terminal()
+  local le = require("bus_line_tool_line_editor")
+  assert(le.requiredTerminals(1, 3, false) == 1)
+  assert(le.requiredTerminals(3, 3, false) == 1)
+end
+
+function t.middle_stop_is_visited_twice_so_it_needs_two()
+  local le = require("bus_line_tool_line_editor")
+  assert(le.requiredTerminals(2, 3, false) == 2)
+end
+
+function t.every_stop_of_a_circle_line_needs_two()
+  local le = require("bus_line_tool_line_editor")
+  assert(le.requiredTerminals(1, 3, true) == 2)
+  assert(le.requiredTerminals(3, 3, true) == 2)
+end
+
+function t.a_two_stop_line_has_only_end_stops()
+  local le = require("bus_line_tool_line_editor")
+  assert(le.requiredTerminals(1, 2, false) == 1)
+  assert(le.requiredTerminals(2, 2, false) == 1)
+end
+
 return t

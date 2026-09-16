@@ -314,6 +314,13 @@ local function setupLine(positions, param, isCircleReturn)
 	else
 		colour = lineColorFn()
 	end
+	if isCircleReturn then
+		-- A circle line is built as two lines. Without this both would carry the same chosen name
+		-- and colour and be indistinguishable in the line list; the chosen colour stays on the
+		-- forward line and the reverse one gets the next colour from the game's palette.
+		name = name .. " " .. _("(reverse)")
+		colour = lineColorFn()
+	end
 	usedTerminals = {}
 	if #line.stops > 1 then
 		trace("Creating line for bus stop")
@@ -398,6 +405,9 @@ local function examineStations(stationsToExamine, param)
 		end		
 	end 	
 end 
+
+-- Adding a stop to an existing line needs the same station pass, so the line editor calls this too.
+builder.examineStations = examineStations
 
 -- Builds the street proposal that places a bus stop pair on each edge. positionsOut[edgeId] = {p=, p0=, p1=}.
 function builder.buildStopsProposal(edgeIds, positionsOut)

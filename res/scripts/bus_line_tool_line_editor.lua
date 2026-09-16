@@ -53,6 +53,13 @@ function lineEditor.successorChanged(plan, k, originalStopCount)
 	return not (nextEntry and nextEntry.origIndex == origNext)
 end
 
+-- How many free terminals a station needs to serve this stop, mirroring createBusLine: an end stop
+-- of a there-and-back line is visited once, every other stop (and every stop of a circle line, whose
+-- reverse line visits it again) is visited twice.
+function lineEditor.requiredTerminals(position, count, isCircle)
+	return (position > 1 and position < count or isCircle) and 2 or 1
+end
+
 ---------------------------------------------------------------------------------------------
 -- GUI side
 
@@ -133,6 +140,24 @@ function lineEditor.applyEdit(param, deps)
 		end
 	end
 
+	-- Stations the user added to the line need the same examine/upgrade pass new lines get
+	-- (spec section 9 step 1): without a free terminal the stop would silently land on terminal 0.
+	-- Stops that were already on the line keep the terminal they have.
+	local stationsToExamine = {}
+	for position, entry in ipairs(plan) do
+		if not isNewEdge[entry.entityId] and entry.origIndex == nil then
+			local required = lineEditor.requiredTerminals(position, #plan, loaded.isCircle)
+			stationsToExamine[#stationsToExamine + 1] = {
+				stationId = entry.entityId,
+				terminalsToAdd = math.max(0, required - util.countFreeTerminalsForStation(entry.entityId)),
+				needsTram = loaded.isTram,
+			}
+		end
+	end
+	local function examine()
+		builder.examineStations(stationsToExamine, { createTramLine = loaded.isTram })
+	end
+
 	local function positionOf(entityId)
 		if isNewEdge[entityId] then
 			local pos = positions[entityId]
@@ -148,10 +173,16 @@ function lineEditor.applyEdit(param, deps)
 			if pos then
 				local nextEntity
 				for i, entry in ipairs(plan) do
-					if entry.entityId == edgeId then nextEntity = (plan[i % #plan + 1] or entry).entityId end
+					if entry.entityId == edgeId then
+						nextEntity = (plan[i % #plan + 1] or entry).entityId
+						break
+					end
 				end
 				local nextPos = nextEntity and positionOf(nextEntity) or pos.p
 				builtStation[edgeId] = builder.stationForBuiltStop(pos, nextPos)
+				if not builtStation[edgeId] then
+					print("bus_line_tool: WARNING could not find the built stop for edge " .. tostring(edgeId) .. "; it was left out of the line")
+				end
 			end
 		end
 		local function resolveStation(entityId)
@@ -184,8 +215,10 @@ function lineEditor.applyEdit(param, deps)
 		end)
 	end
 
+	-- Same ordering as createBusLine: examine via addWork (popped first), finish via addDelayedWork.
 	if #edgeIds == 0 then
-		finish()
+		deps.addWork(examine)
+		deps.addDelayedWork(finish)
 		return
 	end
 	local proposal = builder.buildStopsProposal(edgeIds, positions)
@@ -196,6 +229,7 @@ function lineEditor.applyEdit(param, deps)
 		print("bus_line_tool: built " .. #edgeIds .. " new stops: " .. tostring(success))
 		if success then
 			if undo_script then undo_script.lastResult = res end
+			deps.addWork(examine)
 			deps.addDelayedWork(finish)
 		end
 	end)

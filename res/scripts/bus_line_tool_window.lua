@@ -69,7 +69,7 @@ local function buildColourControl(ctx, onChange)
 	return { comp = comp, get = function() return current end }
 end
 
-local function buildVehicleSelectionPanel(ctx, state)
+local function buildVehicleSelectionPanel(ctx, state, setStatus, refreshAll)
 	local boxLayout = api.gui.layout.BoxLayout.new("HORIZONTAL")
 	boxLayout:addItem(api.gui.comp.TextView.new(_("Vehicle:")))
 	local selectedVehicle = api.gui.comp.ImageView.new(" ")
@@ -107,12 +107,24 @@ local function buildVehicleSelectionPanel(ctx, state)
 	local panel = { comp = boxLayout }
 
 	function panel.refresh(index)
-		if index == 0 then
-			vehicleConfig = vehicleUtil.buildUrbanBus()
-		else
-			vehicleConfig = vehicleUtil.buildTram()
+		-- findBestMatchVehicleOfType returns nil when nothing is available in this year, so both
+		-- the build and the .modelId read below can throw: spec section 10's "no vehicles" path.
+		local ok, config, modelId = pcall(function()
+			local built
+			if index == 0 then built = vehicleUtil.buildUrbanBus() else built = vehicleUtil.buildTram() end
+			return built, built.vehicles[1].part.modelId
+		end)
+		if not ok or not config or not modelId then
+			vehicleConfig = nil
+			pcall(function() selectedVehicle:setImage("", true) end)
+			selectedVehicle:setTooltip(_("No vehicles available this year"))
+			setStatus(_("No vehicles available this year"))
+			priorYear, priorIndex = nil, nil -- rebuild the chooser once vehicles do exist
+			ctx.guiState.needsRedrawRoute = true
+			refreshAll() -- re-gate Build
+			return
 		end
-		local modelId = vehicleConfig.vehicles[1].part.modelId
+		vehicleConfig = config
 		if priorYear ~= util.year() or priorIndex ~= index then
 			priorYear = util.year()
 			priorIndex = index
@@ -160,6 +172,7 @@ local function buildVehicleSelectionPanel(ctx, state)
 		end
 		populateIcon(modelId)
 		ctx.guiState.needsRedrawRoute = true
+		refreshAll() -- re-gate Build now that a vehicle config exists
 	end
 
 	function panel.getVehicleConfig() return vehicleConfig end
@@ -218,10 +231,13 @@ local function buildStopsSection(ctx, state, onRowsChanged)
 				distanceDisplay:setText(api.util.formatLength(util.distance(ctx.getPosition(entityId), ctx.getPosition(prior))))
 			end
 			local removeButton = tipped(util.newButton("", "ui/button/small/cancel@2x.tga"), _("Remove this stop"))
+			-- A line may visit the same station twice (A-B-C-B), so the button removes *its own* row,
+			-- not the first occurrence of the station. `index` is a fresh local per iteration.
+			local index = i
 			removeButton:onClick(function()
 				ctx.addWork(function()
-					local index = util.indexOf(ctx.guiState.selectedEntities, entityId)
-					if index == -1 then return end
+					-- the list may have changed since the row was drawn; only remove a matching row
+					if ctx.guiState.selectedEntities[index] ~= entityId then return end
 					table.remove(ctx.guiState.selectedEntities, index)
 					table.remove(ctx.guiState.colours, index)
 					table.remove(ctx.guiState.stopMeta, index)
@@ -238,7 +254,7 @@ local function buildStopsSection(ctx, state, onRowsChanged)
 	return section
 end
 
-local function buildNewLineTab(ctx, state, stops, vehicles, refreshAll)
+local function buildNewLineTab(ctx, state, stops, vehicles, refreshAll, setStatus)
 	local layout = api.gui.layout.BoxLayout.new("VERTICAL")
 	layout:addItem(stops.comp)
 
@@ -319,6 +335,14 @@ local function buildNewLineTab(ctx, state, stops, vehicles, refreshAll)
 
 	buildButton:onClick(function()
 		ctx.addWork(function()
+			-- Safety net for the unverified tab-change event: if a line is still loaded the tool is
+			-- in edit mode, and building would create a duplicate of it. Drop the loaded line instead.
+			if ctx.guiState.editLine then
+				ctx.removeCircles()
+				refreshAll()
+				setStatus(_("Loaded line discarded; pick stops for the new line"))
+				return
+			end
 			ctx.onBuild({
 				createTramLine = tab.isTram(),
 				addBusLanes = tab.addBusLanes(),
@@ -455,14 +479,17 @@ function windowModule.create(ctx)
 	-- Tab builders that need to refresh both Stops sections (e.g. Reset) call this
 	-- instead of refreshing their own section directly, so nothing goes stale.
 	local function refreshAll() handles.refreshStops() end
-	local vehicles = buildVehicleSelectionPanel(ctx, state)
+	-- handles.setStatus is defined at the bottom of create(); this indirection lets the tab and the
+	-- vehicle panel reach it while they are still being built.
+	local function setStatus(text) handles.setStatus(text) end
+	local vehicles = buildVehicleSelectionPanel(ctx, state, setStatus, refreshAll)
 	-- Each tab gets its own Stops section: a widget has one parent, so the two tabs
 	-- cannot share a single section's comp. Both sections read/write the same
 	-- ctx.guiState lists, so their rows stay in sync; handles.refreshStops()/setStatus()
 	-- below drive both.
 	local newStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
 	local editStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
-	local newTab = buildNewLineTab(ctx, state, newStops, vehicles, refreshAll)
+	local newTab = buildNewLineTab(ctx, state, newStops, vehicles, refreshAll, setStatus)
 	local editTab = buildEditLineTab(ctx, state, editStops, refreshAll)
 
 	local tabs = api.gui.comp.TabWidget.new("NORTH")
@@ -471,9 +498,17 @@ function windowModule.create(ctx)
 	-- The tab-change event name is unverified, so the mode is derived from state instead:
 	-- "edit" while a line is loaded (guiState.editLine), "new" otherwise. The line list is
 	-- refreshed when the window opens (toolbar toggle) and by the Reload button.
+	-- Going back to the New line tab must leave edit mode, which means dropping the loaded line:
+	-- removeCircles() clears editLine, the entities, colours, stopMeta, the route cache and the zones.
+	-- (The Build handler repeats this guard in case this event never fires.)
 	pcall(function()
 		tabs:onCurrentChanged(function(index)
-			if index == 1 then editTab.refreshLineList() end
+			if index == 0 then
+				ctx.removeCircles()
+				refreshAll()
+			elseif index == 1 then
+				editTab.refreshLineList()
+			end
 		end)
 	end)
 
@@ -494,7 +529,8 @@ function windowModule.create(ctx)
 		editStops.refresh()
 		vehicles.updateCount()
 		local n = #ctx.guiState.selectedEntities
-		newTab.buildButton:setEnabled(n > 1, false)
+		-- no vehicle config (nothing available this year) means nothing to buy, so no build
+		newTab.buildButton:setEnabled(n > 1 and vehicles.getVehicleConfig() ~= nil, false)
 		if handles.mode() == "new" then newTab.setSuggestedName(ctx.onNameNeeded()) end
 	end
 	function handles.setStatus(text)
