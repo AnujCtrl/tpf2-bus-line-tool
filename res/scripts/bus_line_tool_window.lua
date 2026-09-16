@@ -181,7 +181,8 @@ local function buildVehicleSelectionPanel(ctx, state)
 	return panel
 end
 
--- The stops table is shared by both tabs; only one tab is visible at a time so one table is enough.
+-- Builds one Stops section. Each tab gets its own instance (a widget has one parent),
+-- both reading/writing the same ctx.guiState lists so their rows stay in sync.
 local function buildStopsSection(ctx, state, onRowsChanged)
 	local layout = api.gui.layout.BoxLayout.new("VERTICAL")
 	layout:addItem(header(_("Stops")))
@@ -254,6 +255,7 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 	local nameField = tipped(api.gui.comp.TextInputField.new(""), _("Suggested from the towns of the first and last stop. Edit freely."))
 	nameField:setMinimumSize(api.gui.util.Size.new(220, 24))
 	state.nameEdited = false
+	state.lastSuggested = nil
 	pcall(function() nameField:onChange(function() state.nameEdited = true end) end)
 	nameRow:addItem(nameField)
 	layout:addItem(nameRow)
@@ -306,7 +308,11 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 	function tab.lineName() return nameField:getText() end
 	function tab.lineColour() return colour.get() end
 	function tab.setSuggestedName(text)
-		if not state.nameEdited then nameField:setText(text, false) end
+		local current = nameField:getText()
+		if not state.nameEdited and (current == "" or current == state.lastSuggested) then
+			nameField:setText(text, false)
+		end
+		state.lastSuggested = text
 	end
 
 	buildButton:onClick(function()
@@ -325,6 +331,7 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 			ctx.removeCircles()
 			buildButton:setEnabled(false, false)
 			state.nameEdited = false
+			state.lastSuggested = nil
 			ctx.guiState.isActive = false
 		end)
 	end)
@@ -335,6 +342,7 @@ local function buildNewLineTab(ctx, state, stops, vehicles)
 			stops.refresh()
 			buildButton:setEnabled(false, false)
 			state.nameEdited = false
+			state.lastSuggested = nil
 			vehicles.refresh(modeGroup:getSelectedIndex())
 			ctx.addWork(vehicles.updateCount)
 		end)
@@ -443,9 +451,14 @@ function windowModule.create(ctx)
 	local state = {}
 	local handles = {}
 	local vehicles = buildVehicleSelectionPanel(ctx, state)
-	local stops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
-	local newTab = buildNewLineTab(ctx, state, stops, vehicles)
-	local editTab = buildEditLineTab(ctx, state, stops)
+	-- Each tab gets its own Stops section: a widget has one parent, so the two tabs
+	-- cannot share a single section's comp. Both sections read/write the same
+	-- ctx.guiState lists, so their rows stay in sync; handles.refreshStops()/setStatus()
+	-- below drive both.
+	local newStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
+	local editStops = buildStopsSection(ctx, state, function() handles.refreshStops() end)
+	local newTab = buildNewLineTab(ctx, state, newStops, vehicles)
+	local editTab = buildEditLineTab(ctx, state, editStops)
 
 	local tabs = api.gui.comp.TabWidget.new("NORTH")
 	tabs:addTab(api.gui.comp.TextView.new(_("New line")), newTab.comp)
@@ -472,24 +485,34 @@ function windowModule.create(ctx)
 	handles.window = window
 	function handles.mode() return ctx.guiState.editLine and "edit" or "new" end
 	function handles.refreshStops()
-		stops.refresh()
+		newStops.refresh()
+		editStops.refresh()
 		vehicles.updateCount()
 		local n = #ctx.guiState.selectedEntities
 		newTab.buildButton:setEnabled(n > 1, false)
 		if handles.mode() == "new" then newTab.setSuggestedName(ctx.onNameNeeded()) end
 	end
-	function handles.setStatus(text) stops.status:setText(text, false) end
+	function handles.setStatus(text)
+		newStops.status:setText(text, false)
+		editStops.status:setText(text, false)
+	end
 	function handles.setSuggestedName(text) newTab.setSuggestedName(text) end
 	function handles.isTram()
 		if handles.mode() == "edit" then return ctx.guiState.editLine and ctx.guiState.editLine.isTram or false end
 		return newTab.isTram()
 	end
-	function handles.addBusLanes() return handles.mode() == "edit" and editTab.addBusLanes() or newTab.addBusLanes() end
+	function handles.addBusLanes()
+		if handles.mode() == "edit" then return editTab.addBusLanes() end
+		return newTab.addBusLanes()
+	end
 	function handles.isCircle()
 		if handles.mode() == "edit" then return ctx.guiState.editLine and ctx.guiState.editLine.isCircle or false end
 		return newTab.isCircle()
 	end
-	function handles.ignoreErrors() return handles.mode() == "edit" and editTab.ignoreErrors() or newTab.ignoreErrors() end
+	function handles.ignoreErrors()
+		if handles.mode() == "edit" then return editTab.ignoreErrors() end
+		return newTab.ignoreErrors()
+	end
 	function handles.lineName() return handles.mode() == "edit" and editTab.lineName() or newTab.lineName() end
 	function handles.lineColour() return newTab.lineColour() end
 	function handles.selectedRow() return ctx.guiState.selectedRow or -1 end

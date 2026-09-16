@@ -408,7 +408,7 @@ local function createComponents()
 				addWork(function() xpcall(ui.refreshVehicles, err) end) -- first (and only) vehicle discovery
 			end
 			pcall(ui.refreshLineList)
-			ui.refreshStops()
+			xpcall(ui.refreshStops, err)
 		else
 			ui.window:close()
 		end
