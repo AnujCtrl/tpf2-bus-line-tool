@@ -9,6 +9,7 @@ local files = {
   "test_upgrade_rules",
   "test_naming",
   "test_station_modules",
+  "test_line_editor",
 }
 
 local passed, failed = 0, 0

@@ -76,6 +76,9 @@ local function isAirLine(line)
 	return isLineType(line, api.type.enum.TransportMode.SMALL_AIRCRAFT) or isLineType(line, api.type.enum.TransportMode.AIRCRAFT)
 end
 
+function lineManager.isTramLine(line) return isTramLine(line) end
+function lineManager.isBusOrTramLine(line) return isBusLine(line) or isTramLine(line) end
+
 local function lineName(lineId) 
 	return api.engine.getComponent(lineId, api.type.ComponentType.NAME).name
 end

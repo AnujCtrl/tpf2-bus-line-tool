@@ -233,6 +233,8 @@ local function createStopForStation(stationId, nextStopPos)
 	return stop
 end
 
+builder.createStopForStation = createStopForStation
+
 local function lineColorFn()  
 	local colors = api.res.getBaseConfig().gui.lineColors
 	if not nextLineColor then 
@@ -396,6 +398,61 @@ local function examineStations(stationsToExamine, param)
 		end		
 	end 	
 end 
+
+-- Builds the street proposal that places a bus stop pair on each edge. positionsOut[edgeId] = {p=, p0=, p1=}.
+function builder.buildStopsProposal(edgeIds, positionsOut)
+	local busStopModel = getBusStopModel()
+	local edgeObjectsToAdd = {}
+	local newProposal = api.type.SimpleProposal.new()
+	local countByTown = {}
+	for _, edgeId in ipairs(edgeIds) do
+		local j = 1 + #newProposal.streetProposal.edgesToAdd
+		local entity = util.copyExistingEdge(edgeId, -j)
+		local p = util.getEdgeMidPoint(edgeId)
+		local objects = {}
+		local town = util.searchForNearestEntity(p, math.huge, "TOWN")
+		if not countByTown[town.id] then
+			countByTown[town.id] = util.countBusStopsForTown(town) + 1
+		else
+			countByTown[town.id] = countByTown[town.id] + 1
+		end
+		local name = town.name .. " " .. _("stop") .. " " .. tostring(countByTown[town.id])
+		for _, left in pairs({ true, false }) do
+			table.insert(objects, { -1 - #edgeObjectsToAdd, left and 0 or 1 })
+			local newStop = api.type.SimpleStreetProposal.EdgeObject.new()
+			newStop.left = left
+			newStop.oneWay = false
+			newStop.playerEntity = api.engine.util.getPlayer()
+			newStop.edgeEntity = entity.entity
+			newStop.name = name
+			newStop.model = busStopModel
+			newStop.param = 0.5
+			table.insert(edgeObjectsToAdd, newStop)
+		end
+		entity.comp.objects = objects
+		newProposal.streetProposal.edgesToAdd[j] = entity
+		newProposal.streetProposal.edgesToRemove[j] = edgeId
+		local edge = util.getEdge(edgeId)
+		positionsOut[edgeId] = { p = p, p0 = util.nodePos(edge.node0), p1 = util.nodePos(edge.node1) }
+	end
+	for i, edgeObj in pairs(edgeObjectsToAdd) do
+		newProposal.streetProposal.edgeObjectsToAdd[i] = edgeObj
+	end
+	return newProposal
+end
+
+-- After a stop pair was built on an edge, returns the station on the side facing nextStopPos.
+function builder.stationForBuiltStop(position, nextStopPos)
+	local edgeId = util.findEdgeConnectingPoints(position.p0, position.p1)
+	if not edgeId then return nil end
+	local edge = util.getEdge(edgeId)
+	local left = util.distance(nextStopPos, position.p0) < util.distance(nextStopPos, position.p1)
+	local target = left and api.type.enum.EdgeObjectType.STOP_LEFT or api.type.enum.EdgeObjectType.STOP_RIGHT
+	for _, edgeObj in pairs(edge.objects) do
+		if edgeObj[2] == target then return edgeObj[1] end
+	end
+	return nil
+end
 
 function builder.createBusLine(param)
 	trace("Received call to build busLine")

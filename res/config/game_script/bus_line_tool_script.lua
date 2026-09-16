@@ -11,6 +11,8 @@ local overlay = require("bus_line_tool_overlay")
 local trace = util.trace
 local pathFindingUtil = require("bus_line_tool_pathfinding_util")
 local naming = require("bus_line_tool_naming")
+local lineEditor = require("bus_line_tool_line_editor")
+local paramHelper = require("bus_line_tool_base_param_helper")
 local routeCache = {}
 
 local workItems = {}
@@ -221,6 +223,7 @@ local function removeCircles()
 	guiState.colours = {}
 	guiState.stopMeta = {}
 	routeCache = {}
+	guiState.editLine = nil
 
 end
 
@@ -296,6 +299,24 @@ local function suggestedLineName()
 	})
 end
 
+-- Loads an existing line into the working state so it can be edited: its stops become the
+-- selected entities, each tagged with the index of the stop it came from.
+local function loadLineForEdit(lineId)
+	removeCircles()
+	local loaded = lineEditor.load(lineId, lineManager)
+	guiState.editLine = { lineId = lineId, name = loaded.name, isTram = loaded.isTram, isCircle = loaded.isCircle, stopCount = loaded.stopCount }
+	guiState.isCircle = loaded.isCircle
+	for i, station in ipairs(loaded.stations) do
+		guiState.selectedEntities[i] = station
+		guiState.colours[i] = nextColour()
+		guiState.stopMeta[i] = { origIndex = i }
+	end
+	guiState.selectedRow = -1
+	guiState.needsRedrawRoute = true
+	guiState.isActive = true
+	guiState.ui.refreshStops()
+end
+
 local function createComponents()
 	local gameBar = api.gui.util.getById("gameInfo.layout")
 	if not gameBar then
@@ -312,9 +333,11 @@ local function createComponents()
 		onBuild = function(param)
 			api.cmd.sendCommand(api.cmd.make.sendScriptEvent("bus_line_tool_script.lua", "createBusLine", "", param), standardCallback)
 		end,
-		onEditLoad = function(lineId) end,   -- filled in Task 8
-		onEditApply = function(param) end,  -- filled in Task 8
-		onLineListNeeded = function() return {} end, -- filled in Task 8
+		onEditLoad = loadLineForEdit,
+		onEditApply = function(param)
+			api.cmd.sendCommand(api.cmd.make.sendScriptEvent("bus_line_tool_script.lua", "editBusLine", "", param), standardCallback)
+		end,
+		onLineListNeeded = function() return lineEditor.listLines(lineManager) end,
 		onNameNeeded = suggestedLineName,
 		colourDefault = function()
 			local colours = api.res.getBaseConfig().gui.lineColors
@@ -381,6 +404,14 @@ function data()
 			if src == "bus_line_tool_script.lua" and id == "createBusLine" then 
 				addWork(function() builder.createBusLine(param) end)
 			end 
+			if src == "bus_line_tool_script.lua" and id == "editBusLine" then
+				addWork(function()
+					lineEditor.applyEdit(param, {
+						builder = builder, util = util, routeBuilder = routeBuilder, paramHelper = paramHelper,
+						lineManager = lineManager, addWork = addWork, addDelayedWork = addDelayedWork, standardCallback = standardCallback,
+					})
+				end)
+			end
 		end
     }
 end
