@@ -4,6 +4,7 @@ local lineManager = require("bus_line_tool_line_manager")
 local paramHelper = require("bus_line_tool_base_param_helper")
 local routeBuilder = require("bus_line_tool_route_builder")
 local helper = require("bus_line_tool_station_template_helper")
+local stationModules = require("bus_line_tool_station_modules")
 local function tryLoadUndo() 
 	local res 
 	pcall(function() res = require "undo_base_util" end)
@@ -150,13 +151,9 @@ local function upgradeRoadStation( station, addTerminal,  needsTram)
 				end
 			end
 		end  
-		local modules = util.setupModuleDetailsForTemplate(helper.createRoadTemplateFn(params))   
-		--[[for k, v in pairs(modules) do 
-			if not params.modules[k] then 
-				params.modules[k]=v 
-			end 
-		end ]]--
-		params.modules = modules
+		local generated = util.setupModuleDetailsForTemplate(helper.createRoadTemplateFn(params))
+		-- keep every module the station already has (truck platforms included); add only new slots
+		params.modules = stationModules.merge(params.modules, generated)
  
 		trace("About to execute upgradeConstruction for constructionId ",constructionId)
 	params.seed = nil
