@@ -144,7 +144,7 @@ function overlay.setFallbackPolyline(points, colour)
 	if #points < 2 then return end
 	local shape = {}
 	for i = 1, #points do shape[#shape + 1] = points[i] end
-	for i = #points - 1, 2, -1 do shape[#shape + 1] = points[i] end
+	for i = #points, 1, -1 do shape[#shape + 1] = points[i] end
 	setZone("blt_route_line", shape, colour, "polyline")
 end
 
