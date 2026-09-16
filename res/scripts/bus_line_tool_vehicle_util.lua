@@ -1,6 +1,7 @@
 local util = require("bus_line_tool_base_util") 
 local paramHelper = require("bus_line_tool_base_param_helper")
 local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local discovery = require("bus_line_tool_vehicle_discovery")
 local vehicleUtil = {}
 local trace = util.trace
 local reportInconsistent = false
@@ -638,127 +639,56 @@ local function calculateTractiveEffortForMass(mass)
 end 
 
  
-local function discoverVehicles() 
+local WANTED_VEHICLE_TYPES = { bus = true, tram = true }
+
+local function discoverVehicles()
 	collectgarbage("collect")
-	local discoveredVehiclesByType = {}
-	local modelRepLookup = {}
-	local modelNameLookup = {}
-	local modelAvailablility = {}
-	local muNames = getMuTypeNames() 
-	trace("Begin discovering vehicles")
-	local allModels = util.deepClone(api.res.modelRep.getAll())
-	collectgarbage("collect")
-	local legacyModels = {}
-	for idx, name in pairs(allModels) do
-		--e.g. vehicle/train/usa/emd_aem_7_v2.mdl -> vehicle/train/usa/emd_aem_7.mdl
-		local legacyModel
-		if string.sub(name, -7, -5) == "_v3" then 
-			legacyModel = string.sub(name, 1, -8).."_v2.mdl" 
-		 
-		elseif string.sub(name, -7, -5) == "_v2" then
-			legacyModel = string.sub(name, 1, -8)..".mdl"
-		end
-		if legacyModel then 
-			trace("Found legacyModel",legacyModel," to ignore based on model name",name)
-			legacyModels[legacyModel]=true 
-		end
-	end
-	
-	local foundModVehicles = false 
-	for idx, name in pairs(allModels) do
-		if string.sub(name,1,8) == "vehicle/" and not legacyModels[name] or muNames[name] then
-			local vehicleType = string.match(string.sub(name,9,-1), "%a*")
-			if not discoveredVehiclesByType[vehicleType] then 
-				discoveredVehiclesByType[vehicleType] = {}
+	local env = {
+		getAllModels = api.res.modelRep.getAll,
+		findModel = api.res.modelRep.find,
+		getModel = api.res.modelRep.get,
+		getModelName = api.res.modelRep.getName,
+		getAllCargoTypes = api.res.cargoTypeRep.getAll,
+		findCargoType = api.res.cargoTypeRep.find,
+		getCargoType = api.res.cargoTypeRep.get,
+		log = print,
+		clock = os.clock,
+		availability = function(name, vehicleType, model)
+			local availability = { all = true }
+			if filterClimate(name, vehicleType, model) then
+				availability.auto = true
 			end
-			trace("Discovered vechileType",vehicleType," from name ",name)
-			local i = api.res.modelRep.find(name)
-			local model = api.res.modelRep.get(i)
-			if vehicleType=="train" and discoveredVehiclesByType["waggon"] then 
-				trace("Possibly found mod vehicles at ",idx)
-				foundModVehicles = true 
-			end
-			modelAvailablility[i] = { all = true }
-			if filterClimate(name, vehicleType, model) or foundModVehicles or muNames[name] then
-				modelAvailablility[i].auto=true
-			end
-			for k, v in pairs({"europe", "usa", "asia"}) do
-				if filterClimateOverride(name, vehicleType, model, v) then 
-					modelAvailablility[i][v]=true
+			for _, region in pairs({ "europe", "usa", "asia" }) do
+				if filterClimateOverride(name, vehicleType, model, region) then
+					availability[region] = true
 				end
 			end
-			local modelCopy = {}
-			--`modelCopy.metadata = util.deepClone(model.metadata) -- 'sol::as_container_t<MetadataMap>': it is not recognized as a container
-			modelCopy.metadata = model.metadata
-		--	modelCopy.boundingInfo = util.deepClone(model.boundingInfo)
-			modelCopy.boundingInfo = model.boundingInfo
-			modelRepLookup[i]=modelCopy
-			modelNameLookup[i]=api.res.modelRep.getName(i)
-			if model.metadata.transportVehicle and not model.metadata.transportVehicle.multipleUnitOnly then 
-				discoveredVehiclesByType[vehicleType][i]=modelCopy
-			end
-		end
-	end
-	local locomotiveReplacments = {}
-	locomotiveReplacments[api.res.modelRep.find("vehicle/train/usa/alco_pa.mdl")]= api.res.modelRep.find("vehicle/train/usa/alco_pb.mdl")
-	
-	local cargoCapacityLookup = {}
-	local cargoIdxLookup = {}
-	local inverseCargoIdxLookup = {}
-	for modelId, model in pairs(modelRepLookup) do 
-		cargoCapacityLookup[modelId]={}
-		cargoIdxLookup[modelId]={}
-		inverseCargoIdxLookup[modelId]={}
-		for cargoTypeIdx, cargoTypeName in pairs(api.res.cargoTypeRep.getAll()) do 
-			cargoCapacityLookup[modelId][cargoTypeIdx] = 0
-			cargoCapacityLookup[modelId][cargoTypeName] = 0
-		end
-		local transportVehicle = model.metadata.transportVehicle
-		if transportVehicle then 
-			for i, compartment in pairs(transportVehicle.compartments) do
-				for j, loadConfig in pairs(compartment.loadConfigs) do
-					for k, cargoEntry in pairs(loadConfig.cargoEntries) do
-						local cargoName = api.res.cargoTypeRep.find(cargoEntry.type)
-						cargoCapacityLookup[modelId][cargoEntry.type] = cargoEntry.capacity + cargoCapacityLookup[modelId][cargoEntry.type]
-						cargoCapacityLookup[modelId][cargoName] = cargoEntry.capacity + cargoCapacityLookup[modelId][cargoName]
-						cargoIdxLookup[modelId][cargoEntry.type] = j
-						cargoIdxLookup[modelId][cargoName] = j
-						inverseCargoIdxLookup[modelId][j]=cargoName
-					end
-				end
-			end 
-		end
-	end
-	
-	local cargoWeightLookup = {}
-	for cargoTypeIdx, cargoTypeName in pairs(api.res.cargoTypeRep.getAll()) do 
-		local weigth = api.res.cargoTypeRep.get(cargoTypeIdx).weight
-		cargoWeightLookup[cargoTypeIdx] = weigth
-		cargoWeightLookup[cargoTypeName] = weigth
-	end
-	vehicleUtil.modelAvailablility = modelAvailablility
-	vehicleUtil.cargoIdxLookup = cargoIdxLookup
-	vehicleUtil.inverseCargoIdxLookup = inverseCargoIdxLookup
-	vehicleUtil.cargoWeightLookup = cargoWeightLookup
-	vehicleUtil.cargoCapacityLookup = cargoCapacityLookup
-	vehicleUtil.locomotiveReplacments = locomotiveReplacments
-	vehicleUtil.discoveredVehiclesByType = discoveredVehiclesByType-- local cache not just for performance, frequent calls to modelRep seem to cause random crashes
-	vehicleUtil.modelRepLookup =  modelRepLookup
-	vehicleUtil.modelNameLookup = modelNameLookup
+			return availability
+		end,
+	}
+	local result = discovery.run(env, WANTED_VEHICLE_TYPES)
+	vehicleUtil.modelAvailablility = result.modelAvailability
+	vehicleUtil.cargoIdxLookup = result.cargoIdxLookup
+	vehicleUtil.inverseCargoIdxLookup = result.inverseCargoIdxLookup
+	vehicleUtil.cargoWeightLookup = result.cargoWeightLookup
+	vehicleUtil.cargoCapacityLookup = result.cargoCapacityLookup
+	vehicleUtil.locomotiveReplacments = {}
+	vehicleUtil.discoveredVehiclesByType = result.byType
+	vehicleUtil.modelRepLookup = result.modelRepLookup
+	vehicleUtil.modelNameLookup = result.modelNameLookup
+	vehicleUtil.lastDiscovery = result
+end
 
-	trace("End discovering vehicles")
-end 
-
-local function getAllVehiclesByType(vehicleType) 
-	if not vehicleUtil.discoveredVehiclesByType then 
-		discoverVehicles()  
+local function getAllVehiclesByType(vehicleType)
+	if not vehicleUtil.discoveredVehiclesByType then
+		discoverVehicles()
 	end
-	if not vehicleUtil.discoveredVehiclesByType[vehicleType] then 
-		debugPrint(discoveredVehiclesByType)
-		print("WARNING! No vehicles of type, ",vehicleType)
-		discoverVehicles() 
+	local vehicles = vehicleUtil.discoveredVehiclesByType[vehicleType]
+	if not vehicles then
+		print("bus_line_tool: WARNING no vehicles of type " .. tostring(vehicleType) .. " were discovered")
+		return {}
 	end
-	return vehicleUtil.discoveredVehiclesByType[vehicleType]
+	return vehicles
 end
  
 local function findVehiclesOfType(vehicleType, params) 
@@ -786,7 +716,8 @@ end
 
 local function getVehicleDescription(vehicle)
 	local baseDescription = _(vehicle.model.metadata.description.name)
-	if vehicleUtil.discoveredVehiclesByType["waggon"][vehicle.modelId] then -- it is a waggon - needs some disambiguation
+	local waggons = vehicleUtil.discoveredVehiclesByType["waggon"]
+	if waggons and waggons[vehicle.modelId] then -- it is a waggon - needs some disambiguation
 		local name = vehicleUtil.modelNameLookup[vehicle.modelId]
 		local region
 		if string.find(name, "asia") then 
@@ -804,6 +735,14 @@ local function getVehicleDescription(vehicle)
 end
 vehicleUtil.findVehiclesOfType = findVehiclesOfType 
 vehicleUtil.getVehicleDescription = getVehicleDescription
+function vehicleUtil.describeVehicle(vehicleDetail)
+	local model = vehicleDetail.model
+	local capacity = vehicleUtil.cargoCapacityLookup[vehicleDetail.modelId]
+	local pax = capacity and capacity["PASSENGERS"] or 0
+	local config = getVehicleConfig(model)
+	local speed = config and config.topSpeed and api.util.formatSpeed(config.topSpeed) or "?"
+	return _(model.metadata.description.name) .. " · " .. tostring(pax) .. " pax · " .. speed
+end
 paramHelper.findVehiclesOfType = findVehiclesOfType
 paramHelper.getVehicleDescription = getVehicleDescription
 
