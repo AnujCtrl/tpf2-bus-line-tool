@@ -1,5 +1,12 @@
 -- Editing existing bus and tram lines. Pure planning functions at the top (unit-tested);
 -- game-facing load/list (GUI state) and applyEdit (engine state) below.
+local function tryLoadUndo()
+	local res
+	pcall(function() res = require "undo_base_util" end)
+	return res
+end
+local undo_script = tryLoadUndo()
+
 local lineEditor = {}
 
 -- entities: working list of entity ids in stop order; stopMeta[i] = { origIndex = n } for stops
@@ -15,14 +22,35 @@ function lineEditor.plan(originalStopCount, entities, stopMeta)
 	return plan
 end
 
--- resolveStation(entityId) -> stationId or nil (nil drops the stop, e.g. a street stop that failed to build)
-function lineEditor.stationsOnly(plan, resolveStation)
-	local stations = {}
+-- resolveStation(entityId) -> stationId or nil (nil drops the stop, e.g. a street stop that failed
+-- to build). Returns the surviving entries and their stations, same index in both lists.
+function lineEditor.resolvePlan(plan, resolveStation)
+	local entries, stations = {}, {}
 	for _, entry in ipairs(plan) do
 		local station = resolveStation(entry.entityId)
-		if station then stations[#stations + 1] = station end
+		if station then
+			entries[#entries + 1] = entry
+			stations[#stations + 1] = station
+		end
 	end
+	return entries, stations
+end
+
+function lineEditor.stationsOnly(plan, resolveStation)
+	local _, stations = lineEditor.resolvePlan(plan, resolveStation)
 	return stations
+end
+
+-- Does the stop at position k lead somewhere else than it used to? A stop's waypoints describe the
+-- leg from that stop to the next one, so they are only still valid when both ends are unchanged.
+-- Lines are cyclic: the last stop's successor is the first one.
+function lineEditor.successorChanged(plan, k, originalStopCount)
+	if #plan == 0 or originalStopCount < 1 then return true end
+	local entry = plan[k]
+	if not entry or not entry.origIndex then return true end -- a stop the user just added
+	local origNext = entry.origIndex % originalStopCount + 1
+	local nextEntry = plan[k % #plan + 1]
+	return not (nextEntry and nextEntry.origIndex == origNext)
 end
 
 ---------------------------------------------------------------------------------------------
@@ -69,18 +97,18 @@ local function buildLine(lineId, plan, resolveStation, builder, util)
 	local line = api.type.Line.new()
 	line.vehicleInfo = original.vehicleInfo
 	pcall(function() line.waitingTime = original.waitingTime end)
-	local stations = lineEditor.stationsOnly(plan, resolveStation)
-	local k = 0
-	for i, entry in ipairs(plan) do
-		local station = resolveStation(entry.entityId)
-		if station then
-			k = k + 1
-			if entry.origIndex and original.stops[entry.origIndex] then
-				line.stops[k] = original.stops[entry.origIndex]
-			else
-				local nextStation = stations[k % #stations + 1]
-				line.stops[k] = builder.createStopForStation(station, util.getStationPosition(nextStation))
-			end
+	-- Only the entries that resolved to a station become stops; that filtered order is the new line.
+	local resolved, stations = lineEditor.resolvePlan(plan, resolveStation)
+	for k, entry in ipairs(resolved) do
+		if entry.origIndex and original.stops[entry.origIndex] then
+			local stop = original.stops[entry.origIndex]
+			-- Waypoints belong to the leg leaving this stop (see lineManager.extendLine): once that
+			-- leg goes somewhere else they describe a route the line no longer takes.
+			if lineEditor.successorChanged(resolved, k, #original.stops) then stop.waypoints = {} end
+			line.stops[k] = stop
+		else
+			local nextStation = stations[k % #stations + 1]
+			line.stops[k] = builder.createStopForStation(stations[k], util.getStationPosition(nextStation))
 		end
 	end
 	return line, stations
@@ -161,9 +189,13 @@ function lineEditor.applyEdit(param, deps)
 		return
 	end
 	local proposal = builder.buildStopsProposal(edgeIds, positions)
+	if undo_script then
+		pcall(function() undo_script.saveBuildDetailsForUndo(proposal) end)
+	end
 	api.cmd.sendCommand(api.cmd.make.buildProposal(proposal, util.initContext(), param.ignoreErrors), function(res, success)
 		print("bus_line_tool: built " .. #edgeIds .. " new stops: " .. tostring(success))
 		if success then
+			if undo_script then undo_script.lastResult = res end
 			deps.addDelayedWork(finish)
 		end
 	end)

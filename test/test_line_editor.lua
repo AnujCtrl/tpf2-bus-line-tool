@@ -34,5 +34,38 @@ function t.stations_only_drops_unresolved()
   local stations = le.stationsOnly(plan, function(entityId) return entityId == 10 and 10 or nil end)
   assert(#stations == 1 and stations[1] == 10)
 end
+-- A stop's waypoints describe the leg leaving it, so they survive only while its successor is the
+-- same original stop. Lines are cyclic: the last stop leads back to the first.
+local function reused(i) return { origIndex = i, entityId = i * 10 } end
+local inserted = { entityId = 99 }
+
+function t.successor_unchanged_when_the_line_was_not_touched()
+  local le = require("bus_line_tool_line_editor")
+  local plan = { reused(1), reused(2), reused(3) }
+  for k = 1, 3 do assert(le.successorChanged(plan, k, 3) == false) end
+end
+
+function t.inserting_a_stop_changes_only_the_stop_before_it()
+  local le = require("bus_line_tool_line_editor")
+  local plan = { reused(1), inserted, reused(2), reused(3) } -- X inserted after A
+  assert(le.successorChanged(plan, 1, 3) == true)  -- A now leads to X
+  assert(le.successorChanged(plan, 2, 3) == true)  -- X is new, it has no original leg
+  assert(le.successorChanged(plan, 3, 3) == false) -- B -> C untouched
+  assert(le.successorChanged(plan, 4, 3) == false) -- C -> A untouched
+end
+
+function t.removing_a_stop_changes_its_predecessor()
+  local le = require("bus_line_tool_line_editor")
+  local plan = { reused(1), reused(3) } -- B removed from A B C
+  assert(le.successorChanged(plan, 1, 3) == true)  -- A -> C is a new leg
+  assert(le.successorChanged(plan, 2, 3) == false) -- C -> A still wraps to A
+end
+
+function t.successor_of_the_last_stop_wraps_to_the_first()
+  local le = require("bus_line_tool_line_editor")
+  local plan = { inserted, reused(1), reused(2), reused(3) } -- X inserted before A
+  assert(le.successorChanged(plan, 4, 3) == true)  -- C wraps to X now, not to A
+  assert(le.successorChanged(plan, 2, 3) == false) -- A -> B untouched
+end
 
 return t

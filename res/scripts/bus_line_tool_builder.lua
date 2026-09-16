@@ -461,48 +461,13 @@ function builder.createBusLine(param)
 	local circleLine = param.circleLine  
 	local selectedEntities = param.selectedEntities  
 	local ignoreErrors = param.ignoreErrors 
-	local busStopModel = getBusStopModel() 
-	local edgeObjectsToAdd = {}
 	local nameList = api.res.getBaseConfig().nameList.folder
-	local newProposal = api.type.SimpleProposal.new()
 	local positions = {}
-	local countByTown = {}
 	local stationsToExamine = {}
+	local edgeIds = {}
 	for i , entityId in pairs(selectedEntities) do 
 		if util.getEdge(entityId) then 
-			local edgeId = entityId
-			local j = 1+#newProposal.streetProposal.edgesToAdd
-			local entity = util.copyExistingEdge(edgeId, -j)
-			local p = util.getEdgeMidPoint(edgeId)
-			local objects = {}
-			local town =  util.searchForNearestEntity(p, math.huge, "TOWN")
-			if not countByTown[town.id] then 
-				countByTown[town.id] = util.countBusStopsForTown(town) + 1
-			else 
-				countByTown[town.id] = countByTown[town.id] + 1
-			end 
-			local name = town.name.." ".._("stop").." "..tostring(countByTown[town.id])
-			for __, left in pairs({true, false}) do 
-				table.insert(objects,  { -1-#edgeObjectsToAdd, left and 0 or 1})
-				
-			
-				
-				local newStop = api.type.SimpleStreetProposal.EdgeObject.new()
-				newStop.left = left
-				newStop.oneWay = false
-				newStop.playerEntity = api.engine.util.getPlayer()
-				newStop.edgeEntity = entity.entity
-				newStop.name = name
-				newStop.model = busStopModel
-				newStop.param = 0.5
-				table.insert(edgeObjectsToAdd, newStop)
-			end
-			
-			entity.comp.objects = objects
-			newProposal.streetProposal.edgesToAdd[j]=entity
-			newProposal.streetProposal.edgesToRemove[j]=edgeId
-			local edge = util.getEdge(edgeId)
-			positions[i]= { p = p, p0 = util.nodePos(edge.node0), p1 = util.nodePos(edge.node1)}
+			edgeIds[1+#edgeIds] = entityId
 		else 
 			positions[i]= entityId
 			local requiredFreeTerminals = (i > 1 and i < #selectedEntities or circleLine) and 2 or 1
@@ -510,10 +475,14 @@ function builder.createBusLine(param)
 			table.insert(stationsToExamine, {stationId = entityId, terminalsToAdd=terminalsToAdd, needsTram = createTramLine})
 		end 	
 	end 
-	for i, edgeObj in pairs(edgeObjectsToAdd) do 
-		newProposal.streetProposal.edgeObjectsToAdd[i]=edgeObj
-	
-	end
+	-- the stop pairs are built by the shared proposal builder above, which the line editor uses too
+	local positionsByEdge = {}
+	local newProposal = builder.buildStopsProposal(edgeIds, positionsByEdge)
+	for i , entityId in pairs(selectedEntities) do 
+		if positionsByEdge[entityId] then 
+			positions[i] = positionsByEdge[entityId]
+		end 
+	end 
 	if undo_script then 
 		pcall(function() undo_script.saveBuildDetailsForUndo(newProposal) end)
 	end 
