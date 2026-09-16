@@ -736,12 +736,7 @@ end
 vehicleUtil.findVehiclesOfType = findVehiclesOfType 
 vehicleUtil.getVehicleDescription = getVehicleDescription
 function vehicleUtil.describeVehicle(vehicleDetail)
-	local model = vehicleDetail.model
-	local capacity = vehicleUtil.cargoCapacityLookup[vehicleDetail.modelId]
-	local pax = capacity and capacity["PASSENGERS"] or 0
-	local config = getVehicleConfig(model)
-	local speed = config and config.topSpeed and api.util.formatSpeed(config.topSpeed) or "?"
-	return _(model.metadata.description.name) .. " · " .. tostring(pax) .. " pax · " .. speed
+	return discovery.describeVehicle(vehicleDetail.model, vehicleUtil.cargoCapacityLookup[vehicleDetail.modelId], api.util.formatSpeed)
 end
 paramHelper.findVehiclesOfType = findVehiclesOfType
 paramHelper.getVehicleDescription = getVehicleDescription

@@ -96,6 +96,15 @@ local function legacyNamesToIgnore(names)
   return legacy
 end
 
+-- Label for the vehicle chooser: "<name> · <pax> pax · <speed>".
+-- capacityByCargo is the model's entry of cargoCapacityLookup (may be nil); formatSpeed formats a top speed (api.util.formatSpeed in game).
+function discovery.describeVehicle(model, capacityByCargo, formatSpeed)
+  local pax = capacityByCargo and capacityByCargo["PASSENGERS"] or 0
+  local config = model.metadata.roadVehicle or model.metadata.railVehicle
+  local speed = config and config.topSpeed and formatSpeed(config.topSpeed) or "?"
+  return _(model.metadata.description.name) .. " · " .. tostring(pax) .. " pax · " .. speed
+end
+
 -- env: see plan Task 2 "Interfaces". wanted: { bus = true, tram = true }.
 function discovery.run(env, wanted)
   local started = env.clock()
@@ -168,9 +177,11 @@ function discovery.run(env, wanted)
   end
 
   result.millis = (env.clock() - started) * 1000
+  local vehicleTypes = {}
+  for vehicleType in pairs(result.counts) do vehicleTypes[#vehicleTypes + 1] = vehicleType end
+  table.sort(vehicleTypes)
   local summary = {}
-  for vehicleType, count in pairs(result.counts) do summary[#summary + 1] = count .. " " .. vehicleType end
-  table.sort(summary)
+  for _, vehicleType in ipairs(vehicleTypes) do summary[#summary + 1] = result.counts[vehicleType] .. " " .. vehicleType end
   env.log(("bus_line_tool: discovered %s models in %.0f ms (%d skipped)"):format(table.concat(summary, ", "), result.millis, #result.skipped))
   return result
 end

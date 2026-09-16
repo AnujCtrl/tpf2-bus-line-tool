@@ -91,4 +91,31 @@ function t.multiple_unit_only_models_are_not_offered()
   assert(not result.byType.tram[0], "but not offered as a choice")
 end
 
+function t.summary_is_ordered_by_type_name()
+  local models = {}
+  for i = 1, 3 do models[#models + 1] = fake.model("vehicle/bus/b" .. i .. ".mdl") end
+  for i = 1, 12 do models[#models + 1] = fake.model("vehicle/tram/t" .. i .. ".mdl") end
+  fake.modelRep(models)
+  local discovery = require("bus_line_tool_vehicle_discovery")
+  local result = discovery.run(env(), { bus = true, tram = true })
+  assert(result.counts.bus == 3 and result.counts.tram == 12)
+  local last = fake.log[#fake.log]
+  assert(last:find("^bus_line_tool: discovered 3 bus, 12 tram models in "), last)
+end
+
+function t.describes_vehicle_with_capacity_and_speed()
+  fake.modelRep({ fake.model("vehicle/tram/t.mdl", { capacity = 80, topSpeed = 70, label = "Tram T" }) })
+  local discovery = require("bus_line_tool_vehicle_discovery")
+  local result = discovery.run(env(), { tram = true })
+  local label = discovery.describeVehicle(result.modelRepLookup[0], result.cargoCapacityLookup[0], function(v) return v .. " km/h" end)
+  assert(label == "Tram T · 80 pax · 70 km/h", label)
+end
+
+function t.describes_vehicle_without_config_or_capacity()
+  local discovery = require("bus_line_tool_vehicle_discovery")
+  local model = { metadata = { description = { name = "Mystery" } } }
+  local label = discovery.describeVehicle(model, nil, function(v) return v .. " km/h" end)
+  assert(label == "Mystery · 0 pax · ?", label)
+end
+
 return t
