@@ -5,6 +5,7 @@ local fake = require("fake_api")
 local files = {
   "test_smoke",
   "test_discovery",
+  "test_geometry",
 }
 
 local passed, failed = 0, 0

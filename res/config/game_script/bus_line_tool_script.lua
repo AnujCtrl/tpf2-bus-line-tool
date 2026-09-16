@@ -1,16 +1,14 @@
 local gui = require("gui")
 local vec2 = require("vec2")
-local vec3 = require("vec3")
 local util = require("bus_line_tool_base_util")
 local builder = require("bus_line_tool_builder")
 local lineManager = require("bus_line_tool_line_manager")
-local zoneutil = require "mission.zone"
 local constructionUtil = require("bus_line_tool_construction_util")
 local routeBuilder = require("bus_line_tool_route_builder")
 local vehicleUtil = require("bus_line_tool_vehicle_util")
 local windowModule = require("bus_line_tool_window")
+local overlay = require("bus_line_tool_overlay")
 local trace = util.trace
-local v3 = util.v3
 
 local workItems = {}
 
@@ -51,10 +49,6 @@ routeBuilder.standardCallback = standardCallback
  --pos = {0,0}
 --}
 
-local function hypot(x, y)
-	return math.sqrt(x*x + y*y)
-end
-
 local guiState = {
 	circles = {},
 	
@@ -92,130 +86,13 @@ local function isMouseWithinWindow()
 	return false
 end
  
-local function addCircle(name, circle, colour, shape)
-	if not shape then 
-		shape = zoneutil.makeCircleZone(circle.pos , circle.radius, 16)
-	end
-	game.interface.setZone(name, {
-		polygon= shape,
-		draw=true,
-		drawColor = colour,
-	})
-	if not guiState.circles[name] then 
-		guiState.circles[name]=circle 
-	end
-end 
 local function removeCircle(name)
 	game.interface.setZone(name, nil)
 	guiState.circles[name]=nil
-end 
-local function v3to2d(v) 
-	return {v.x, v.y }
-end  
- 
- local function getShapeForEdge(edge) 
-	 
-	local w = util.getEdgeWidth(edge.id)/2
-	local p0 = util.v3fromArr(edge.node0pos)
-	local t0 = util.v3fromArr(edge.node0tangent)
-	local p1 = util.v3fromArr(edge.node1pos)
-	local t1 = util.v3fromArr(edge.node1tangent)
-	
-	local t0perp = vec3.normalize(util.rotateXY(t0, math.rad(90)))
-	local t1perp = vec3.normalize(util.rotateXY(t1, math.rad(90)))
-	
-	local p0right = p0+w*t0perp
-	local p0left = p0-w*t0perp
-	local p1right = p1+w*t1perp
-	local p1left = p1-w*t1perp
-	
-	local result = {}
-	
-	for i = 0, 6 do 
-		table.insert(result, v3to2d(util.hermite(i/6, p0right, t0, p1right, t1).p))
-	end
-	for i = 6, 0, -1 do 
-		table.insert(result, v3to2d(util.hermite(i/6, p0left, t0, p1left, t1).p))
-	end
-	
-	return result
- end
- local function getShapeForConstruction(entity ) 
-	local result = {}
-	local bbox 
-	pcall(function() bbox = api.engine.getComponent(entity, api.type.ComponentType.BOUNDING_VOLUME) end)
-	if not bbox then 
-		trace("Unable to find bbox for ",entity)
-		return 
-	end
-	 
-	local isInBox = function(p)   
-		return p.x >= bbox.bbox.min.x and p.x <= bbox.bbox.max.x  and p.y >= bbox.bbox.min.y  and p.y <= bbox.bbox.max.y
-	end	
-	local x = (bbox.bbox.max.x - bbox.bbox.min.x)/2
-	local y = (bbox.bbox.max.y - bbox.bbox.min.y)/2
-	local construction = api.engine.getComponent(entity, api.type.ComponentType.CONSTRUCTION)
-	local rotation  = vec3.xyAngle(construction.transf:cols(1))
-	local rotation  = vec3.xyAngle(construction.transf:cols(0))
-	local p  = v3(construction.transf:cols(3))
-	local t0 = v3(construction.transf:cols(0))
-	local t1 = v3(construction.transf:cols(1))
-	
-	trace("The rotation was",math.deg(rotation))
-	local points = {}
-	table.insert(points, vec3.new(bbox.bbox.min.x, bbox.bbox.min.y ,p.z)  )
-	table.insert(points, vec3.new(bbox.bbox.min.x, bbox.bbox.max.y  ,p.z )  )
-	table.insert(points, vec3.new(bbox.bbox.max.x, bbox.bbox.max.y  ,p.z)  )
-	table.insert(points, vec3.new(bbox.bbox.max.x, bbox.bbox.min.y  ,p.z)  )
-	-- somewhat crude, not sure how to access the true collider list
-	
-	local midP = 0.25*(points[1]+points[2]+points[3]+points[4]) 
-	--rotation = math.abs(rotation)%math.rad(90)
-	for i, point in pairs(points) do 
-		local vector = point - midP 
-	--	table.insert(result, v3to2d(midP + util.rotateXY(vector, rotation)))
-	end 
-	
-	p = midP
-	local maxExtent = math.ceil(hypot(x,y))
-	for i = 1, maxExtent do
-		local testP = p + i*t0 
-		--local entities = util.findIntersectingEntities(testP, 5, 50)
-		--if not util.contains(entities, entity.id) then 
-		if not isInBox(testP) then 
-			x = i
-			break
-		end 
-	end 
-	for i = 1, maxExtent do
-		--local testY = i*5 
-		local testP = p + i*t1 
-		--local entities = util.findIntersectingEntities(testP, 5, 50)
-		--if not util.contains(entities, entity.id) then 
-		if not isInBox(testP) then 
-			y = i
-			break
-		end 
-	end 
-	 
-	
-	table.insert(result, v3to2d(p + x*t0 + y*t1))
-	table.insert(result, v3to2d(p + x*t0 - y*t1))
-	table.insert(result, v3to2d(p - x*t0 - y*t1))
-	table.insert(result, v3to2d(p - x*t0 + y*t1))
-	
-	return result
- end
- 
- local function getShapeForEntity(entity) 
-	if entity.type == "BASE_EDGE" then 
-		return getShapeForEdge(entity)
-	else 
-		return getShapeForConstruction(api.engine.system.streetConnectorSystem.getConstructionEntityForStation(entity.id))
-	end 
- end 
- 
- local function getPosition(entityId) 
+	guiState.needsRedrawRoute = true
+end
+
+ local function getPosition(entityId)
 	if util.getEdge(entityId) then 
 		return  util.getEdgeMidPoint(entityId)
 	else 
@@ -223,92 +100,73 @@ end
 	end 
  end 	
  
-local function updateCircle() 
-	local colour = {128,128,128,0.25} -- transparent white 
-	if guiState.needsRedrawRoute then 
+local function updateCircle()
+	if guiState.needsRedrawRoute then
 		guiState.needsRedrawRoute = false -- do upfront to avoid repeated exceptions
-		local key = "bus_line_tool_route"
-		if #guiState.selectedEntities > 1 then 
-			local shape = {}
-			for i = 1, #guiState.selectedEntities do 
-				local p = getPosition(guiState.selectedEntities[i])
-				table.insert(shape, v3to2d(p))
-			end 
-			if not guiState.isCircle then 
-				for i = #guiState.selectedEntities, 1, -1 do 
-					table.insert(shape, shape[i])
-				end 
-			end 
-			addCircle(key, true, colour, shape)
-		else 
-			removeCircle(key)
-		end 
-	
-	end 
-	if isMouseWithinWindow() then 
+		local stops = {}
+		for i, entityId in ipairs(guiState.selectedEntities) do
+			local p = getPosition(entityId)
+			stops[i] = { id = entityId, pos = { p.x, p.y }, colour = guiState.colours[i], pending = guiState.stopMeta[i] and guiState.stopMeta[i].pending }
+		end
+		overlay.setStops(stops)
+		if #stops > 1 then
+			local points = {}
+			for i, stop in ipairs(stops) do points[i] = stop.pos end
+			if guiState.isCircle then points[#points + 1] = stops[1].pos end
+			overlay.setFallbackPolyline(points, overlay.FALLBACK_COLOUR)
+		else
+			overlay.setFallbackPolyline({}, nil)
+		end
+	end
+	if isMouseWithinWindow() then
 		--trace("Suppressed update circle due to in window")
-		return 
+		return
 	end
 	local pos = game.gui.getTerrainPos()
-	if not pos then 
+	if not pos then
 		-- trace("No position found")
-		return  
+		return
 	end
-	local circles = guiState.circles
-	if not circles["mouse"] then 
-		circles["mouse"]={}
-	end
-	 
-	local circle = circles["mouse"]
+	local circle = guiState.circles["mouse"] or {}
+	guiState.circles["mouse"] = circle
 	local prevX = circle.pos and circle.pos[1]
 	local prevY = circle.pos and circle.pos[2]
-	
 	circle.pos = pos
 	circle.radius = 50
-	local entity =util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "STATION", 
-		function(station) 
-			return
-				not station.cargo 
-				and station.carriers.ROAD
-		end
-		)
-	if not entity then 
-		entity =util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "BASE_EDGE", 
-		function(edge) 
-			return
-				not edge.track 
-				and not util.isFrozenEdge(edge.id) 
-				and #util.getEdge(edge.id).objects == 0
-				and util.getEdgeLength(edge.id) > 40
-		end
-		)
+	local entity = util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "STATION",
+		function(station) return not station.cargo and station.carriers.ROAD end)
+	if not entity then
+		entity = util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "BASE_EDGE",
+			function(edge)
+				return not edge.track and not util.isFrozenEdge(edge.id)
+					and #util.getEdge(edge.id).objects == 0 and util.getEdgeLength(edge.id) > 40
+			end)
 	end
 	guiState.entity = entity
-	local shape
-	if entity then 
-		--trace("Found entity ",entity.id,"near",  circle.pos[1],    circle.pos[2]) 
-		circle.pos =  util.v3ToArr(getPosition(entity.id)) 
-		--colour = {0,128,0,0.25} 
-		 
-		shape = getShapeForEntity(entity)
-		  
-		
-	end 
-	local circleChanged = prevX ~= circle.pos[1] or prevY ~= circle.pos[2]
- 
-	 
-	--trace("In updateCircle, circleChanged?",circleChanged, prevX,circle.pos[1], prevY, circle.pos[2] )
-	if circleChanged then --performance optimisation
-		addCircle("mouse", circle, colour, shape)
+	if entity then
+		circle.pos = util.v3ToArr(getPosition(entity.id))
 	end
-	
-	
-end 
+	local circleChanged = prevX ~= circle.pos[1] or prevY ~= circle.pos[2]
+	if circleChanged then
+		overlay.setHover(entity)
+		if guiState.ui then
+			if not entity then
+				guiState.ui.setStatus(_("Nothing selectable here"))
+			elseif entity.type == "BASE_EDGE" then
+				guiState.ui.setStatus(_("Street segment: click to add a stop"))
+			else
+				local name = api.engine.getComponent(entity.id, api.type.ComponentType.NAME)
+				guiState.ui.setStatus(_("Station: ") .. (name and name.name or "?") .. _(" — click to add"))
+			end
+		end
+	end
+end
 
 
 
-local function removeCircles() 
-	for k, v in pairs(guiState.circles) do 
+local function removeCircles()
+	overlay.clear()
+	for k, v in pairs(guiState.circles) do
 		removeCircle(k)
 	end 
 	guiState.entity = nil
@@ -327,20 +185,15 @@ local mouseListener = function(MouseEvent)
 			if  guiState.entity and MouseEvent.type == 2 and MouseEvent.button == 0 and not isMouseWithinWindow() then 
 				--debugPrint(MouseEvent)
 				guiState.needsRedrawRoute = true
-				local circle = guiState.circles["mouse"]
 				local entityId = guiState.entity.id
 				trace("Processing mouseEvent the selected entity was ", entityId)
-				local entityString = "bus_line_tool"..tostring(entityId)
 				local idx = util.indexOf(guiState.selectedEntities, entityId)
 				if idx ~= -1 then --treat as deselection
 					table.remove(guiState.selectedEntities, idx)
 					table.remove(guiState.colours, idx)
 					table.remove(guiState.stopMeta, idx)
-					removeCircle(entityString)
 				else
 					local colour = nextColour()
-					local shape = getShapeForEntity(guiState.entity)
-					addCircle(entityString, circle, colour, shape)
 					local insertAt = #guiState.selectedEntities + 1
 					if guiState.ui and guiState.ui.mode() == "edit" and guiState.ui.selectedRow() >= 0 then
 						insertAt = math.min(guiState.ui.selectedRow() + 2, #guiState.selectedEntities + 1)
@@ -448,4 +301,4 @@ function data()
 end
 
 
- 
+ 
