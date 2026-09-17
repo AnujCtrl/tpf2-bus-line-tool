@@ -27,13 +27,15 @@ local function readLines(path)
   return lines
 end
 
--- In Transport Fever 2, `_` is the translation function. A loop variable or local named `_`
--- shadows it and any later `_("text")` in that scope calls a number (this crashed Build once).
+-- In Transport Fever 2, `_` is the translation function. A loop variable, a local or a parameter
+-- named `_` shadows it and any later `_("text")` in that scope calls a number (this crashed Build
+-- once). The local pattern also has to catch `local _, x = f()`, and the parameter pattern has to
+-- catch a bare `_` anywhere in the list; the %f frontiers keep `__` (the approved spelling) clean.
 function t.no_loop_variable_shadows_the_translator()
   local offenders = {}
   for _i, path in ipairs(FORK_FILES) do
     for n, line in ipairs(readLines(path)) do
-      if line:match("for%s+_%s*[,i]") or line:match("^%s*local%s+_%s*=") or line:match("function%s*%(%s*_%s*[,)]") then
+      if line:match("for%s+_%s*[,i]") or line:match("^%s*local%s+_%s*[,=]") or line:match("function%s*%([^)]*%f[%w_]_%f[^%w_]") then
         offenders[#offenders + 1] = path .. ":" .. n .. ": " .. line:gsub("^%s+", "")
       end
     end

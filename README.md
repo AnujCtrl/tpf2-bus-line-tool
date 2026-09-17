@@ -42,3 +42,4 @@ See `docs/superpowers/specs/2026-09-16-bus-line-tool-fork-design.md`.
 - Switching from the Edit line tab back to New line discards the loaded line and its stops.
 - A stop added at an existing station that has no free terminal gets an extra platform where the station layout allows it; otherwise it shares terminal 0.
 - On maps with regional vehicle restrictions, modded buses and trams whose model path lacks the region name may be filtered out of the chooser.
+- Street upgrades (bus lanes, tram tracks) validate the proposal edge by edge; on routes of more than about 50 street segments the game can pause for several seconds while the upgrade is computed.

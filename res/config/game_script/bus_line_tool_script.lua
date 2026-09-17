@@ -113,6 +113,14 @@ local function previewTramTrackType()
 	return (catenary and guiState.ui.isElectricTramSelected()) and 2 or 1
 end
 
+-- A leg with no road path cannot be built by the engine, so the New tab's Build button is
+-- gated on this. Re-gate only when the flag actually flips, so the redraw stays cheap.
+local function setRouteMissing(value)
+	if guiState.routeMissing == value then return end
+	guiState.routeMissing = value
+	if guiState.ui then addWork(function() guiState.ui.refreshStops() end) end
+end
+
 local function updateCircle()
 	if guiState.needsRedrawRoute then
 		guiState.needsRedrawRoute = false -- do upfront to avoid repeated exceptions
@@ -162,9 +170,11 @@ local function updateCircle()
 			else
 				overlay.setFallbackPolyline({}, nil)
 			end
+			setRouteMissing(#missing > 0)
 		else
 			overlay.setRouteEdges({})
 			overlay.setFallbackPolyline({}, nil)
+			setRouteMissing(false)
 		end
 	end
 	if isMouseWithinWindow() then
@@ -224,6 +234,7 @@ local function removeCircles()
 	guiState.stopMeta = {}
 	routeCache = {}
 	guiState.editLine = nil
+	guiState.routeMissing = false
 
 end
 
@@ -357,6 +368,10 @@ local function createComponents()
 	guiState.ui = ui
 	ui.window:setVisible(false, false)
 	api.gui.util.getGameUI():getMainRendererComponent():insertMouseListener(mouseListener)
+	-- The window and the mouse listener now exist. Mark init done immediately so a failure in
+	-- the toolbar-button code below cannot make guiUpdate run createComponents a second time
+	-- and end up with two windows and two mouse listeners. (Also set at the end of the function.)
+	guiState.isInit = true
 
 	local icon = api.gui.comp.ImageView.new("ui/icons/windows/destinations@4x.tga")
 	local layout = api.gui.util.getById("mainButtonsLayout"):getItem(1):getLayout()

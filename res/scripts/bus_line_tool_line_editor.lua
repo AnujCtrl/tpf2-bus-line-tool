@@ -37,7 +37,7 @@ function lineEditor.resolvePlan(plan, resolveStation)
 end
 
 function lineEditor.stationsOnly(plan, resolveStation)
-	local _, stations = lineEditor.resolvePlan(plan, resolveStation)
+	local __, stations = lineEditor.resolvePlan(plan, resolveStation)
 	return stations
 end
 
@@ -134,7 +134,9 @@ function lineEditor.applyEdit(param, deps)
 	-- proposal is built the old edge ids are gone and util.getEdge() can no longer identify them.
 	local edgeIds, positions, isNewEdge = {}, {}, {}
 	for __, entry in ipairs(plan) do
-		if util.getEdge(entry.entityId) then
+		-- An edited line may visit the same edge twice (A-B-C-B): only build one stop pair on it,
+		-- otherwise the proposal carries duplicate edge ids and the build fails.
+		if util.getEdge(entry.entityId) and not isNewEdge[entry.entityId] then
 			edgeIds[#edgeIds + 1] = entry.entityId
 			isNewEdge[entry.entityId] = true
 		end
@@ -167,6 +169,9 @@ function lineEditor.applyEdit(param, deps)
 	end
 
 	local function finish()
+		-- Terminal bookkeeping is per build: start this edit with a clean slate so the picks
+		-- made for a previous build cannot block terminals on this line's stations.
+		deps.builder.resetUsedTerminals()
 		local builtStation = {}
 		for __, edgeId in ipairs(edgeIds) do
 			local pos = positions[edgeId]

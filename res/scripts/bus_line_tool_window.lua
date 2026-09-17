@@ -188,9 +188,11 @@ local function buildVehicleSelectionPanel(ctx, state, setStatus, refreshAll)
 	end
 
 	function panel.getNumberOfVehicles()
-		local result
-		if not pcall(function() result = tonumber(countInput:getText()) end) then result = lastComputedCount end
-		return result
+		-- tonumber("") returns nil without raising, so a pcall alone is not enough: the engine
+		-- would then run `for i = 1, nil`. Fall back to the computed count and clamp.
+		local ok, n = pcall(function() return tonumber(countInput:getText()) end)
+		n = (ok and n) or lastComputedCount
+		return math.max(0, math.min(100, math.floor(n)))
 	end
 
 	return panel
@@ -424,7 +426,9 @@ local function buildEditLineTab(ctx, state, stops, refreshAll)
 
 	function tab.refreshLineList()
 		lines = ctx.onLineListNeeded()
-		combo:clear(false)
+		-- ComboBox has no clear(): the game registers addItem/removeItem/getNumItems/
+		-- getCurrentIndex/onIndexChanged only. Remove back-to-front so the indexes stay valid.
+		for i = combo:getNumItems() - 1, 0, -1 do combo:removeItem(i) end
 		for __, line in ipairs(lines) do combo:addItem(line.name) end
 	end
 
@@ -507,7 +511,8 @@ function windowModule.create(ctx)
 				ctx.removeCircles()
 				refreshAll()
 			elseif index == 1 then
-				editTab.refreshLineList()
+				-- a widget error while repopulating the combo must not escape a GUI event handler
+				pcall(editTab.refreshLineList)
 			end
 		end)
 	end)
@@ -529,13 +534,15 @@ function windowModule.create(ctx)
 		editStops.refresh()
 		vehicles.updateCount()
 		local n = #ctx.guiState.selectedEntities
-		-- no vehicle config (nothing available this year) means nothing to buy, so no build
-		newTab.buildButton:setEnabled(n > 1 and vehicles.getVehicleConfig() ~= nil, false)
+		-- no vehicle config (nothing available this year) means nothing to buy, so no build;
+		-- routeMissing means at least one leg has no road path, which the engine cannot build
+		newTab.buildButton:setEnabled(n > 1 and vehicles.getVehicleConfig() ~= nil and not ctx.guiState.routeMissing, false)
 		if handles.mode() == "new" then newTab.setSuggestedName(ctx.onNameNeeded()) end
 	end
 	function handles.setStatus(text)
-		newStops.status:setText(text, false)
-		editStops.status:setText(text, false)
+		-- TextView:setText takes one argument (the two-argument form is TextInputField's)
+		newStops.status:setText(text)
+		editStops.status:setText(text)
 	end
 	function handles.setSuggestedName(text) newTab.setSuggestedName(text) end
 	function handles.isTram()

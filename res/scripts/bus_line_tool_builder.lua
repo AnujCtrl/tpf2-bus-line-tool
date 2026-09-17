@@ -67,6 +67,9 @@ local function checkIfCanAddPlatform(constructionId, left, templateIndex)
 	return not result.isError
 end
 local function upgradeRoadStation( station, addTerminal,  needsTram)
+		-- The entrance/exit B upgrade is not offered by this tool; declaring it keeps the reads
+		-- below off the global table (where it was always nil anyway).
+		local addEntranceB = false
 		local constructionId = api.engine.system.streetConnectorSystem.getConstructionEntityForStation(station)
 		if constructionId == -1 then 
 			return
@@ -75,7 +78,14 @@ local function upgradeRoadStation( station, addTerminal,  needsTram)
 		trace("Anout to get construction for station ", station, " constructionId = ",constructionId)
 		local construction = api.engine.getComponent(constructionId, api.type.ComponentType.CONSTRUCTION)
 		local params = util.deepClone(construction.params)
-		if not params.templateIndex then 
+		-- Only the modular road station carries these params. A mod or legacy station would die on
+		-- `params.platL + 1` below and take the whole examine pass with it, so leave it alone.
+		if not (params.platL and params.platR and params.length and params.year) then
+			print("bus_line_tool: station " .. tostring(station) .. " is not a modular road station, skipping platform upgrade")
+			return
+		end
+		params.tramTrack = params.tramTrack or 0
+		if not params.templateIndex then
 			params.templateIndex = util.getStation(station).cargo and 3 or 2
 		end
 		local needsUpgrade = addTerminal 
@@ -157,12 +167,15 @@ local function upgradeRoadStation( station, addTerminal,  needsTram)
  
 		trace("About to execute upgradeConstruction for constructionId ",constructionId)
 	params.seed = nil
-		if not pcall(function()game.interface.upgradeConstruction(constructionId, construction.fileName, params) end) and params.includeEntryExit then 
+		-- upgradeConstruction returns the id of the REPLACEMENT construction; the old id is gone,
+		-- so setPlayer has to be told the new one or it throws and aborts the examine pass.
+		local ok, newId = pcall(function() return game.interface.upgradeConstruction(constructionId, construction.fileName, params) end)
+		if not ok and params.includeEntryExit then
 			params.includeEntryExit = nil
-			pcall(function()game.interface.upgradeConstruction(constructionId, construction.fileName, params) end)
+			ok, newId = pcall(function() return game.interface.upgradeConstruction(constructionId, construction.fileName, params) end)
 		end 
 		trace("About set player")
-		game.interface.setPlayer(constructionId, game.interface.getPlayer())
+		pcall(function() game.interface.setPlayer((type(newId) == "number" and newId) or constructionId, game.interface.getPlayer()) end)
 		util.clearCacheNode2SegMaps()
  end
 
@@ -182,6 +195,11 @@ end
 
 local usedTerminals = {}
 
+-- Terminal picks are only visible to the line system once the line exists, so a single build has
+-- to remember what it handed out. Reset once per build (createBusLine / the line editor's finish).
+function builder.resetUsedTerminals()
+	usedTerminals = {}
+end
 
 local function getTangentOfNode(vehicleNode)
 	for i , tn in pairs(api.engine.getComponent(vehicleNode.entity, api.type.ComponentType.TRANSPORT_NETWORK).edges) do 
@@ -190,7 +208,7 @@ local function getTangentOfNode(vehicleNode)
 		end 
 	end 
 	trace("WARNING! No matching tangent for vehicleNode")
-	debugPrint(vehicleNode)
+	if util.tracelog then debugPrint(vehicleNode) end
 end 
 
 local function chooseFreeTerminal(stationId, nextStopPos) 
@@ -200,16 +218,25 @@ local function chooseFreeTerminal(stationId, nextStopPos)
 	end
 	local station = util.getStation(stationId)
 	--debugPrint(station)
-	for i, terminal in pairs(getFreeTerminalsForStation(stationId)) do 
-		if nextStopPos then
+	for i, terminal in pairs(getFreeTerminalsForStation(stationId)) do
+		-- a terminal this build already handed out is not free any more: the line system only
+		-- learns about it once the line is created
+		if nextStopPos and not usedTerminals[stationId][terminal] then
 			trace("Inspecting terminal ",terminal, " for ",stationId)
 			local vehicleNode =  station.terminals[terminal+1].vehicleNodeId 
 			local tangent = getTangentOfNode(vehicleNode)
-			local naturalTangent = nextStopPos-util.getStationPosition(stationId)
-			local angle = math.abs(util.signedAngle(naturalTangent, tangent))
-			trace("The angle at terminal ",terminal," was ",math.deg(angle))
-			table.insert(options, {terminal = terminal, scores = { angle }})
-		elseif not usedTerminals[stationId][terminal] then 
+			-- no tangent means the vehicle node has no matching transport-network edge; scoring it
+			-- would call signedAngle with nil, so leave that terminal out of the running
+			if tangent then
+				local naturalTangent = nextStopPos-util.getStationPosition(stationId)
+				local angle = math.abs(util.signedAngle(naturalTangent, tangent))
+				trace("The angle at terminal ",terminal," was ",math.deg(angle))
+				table.insert(options, {terminal = terminal, scores = { angle }})
+			else
+				trace("Skipping terminal ",terminal," at station ",stationId," : no tangent for its vehicle node")
+			end
+		elseif not nextStopPos and not usedTerminals[stationId][terminal] then
+			usedTerminals[stationId][terminal]=true
 			return terminal
 		end
 		
@@ -218,8 +245,9 @@ local function chooseFreeTerminal(stationId, nextStopPos)
 		local result = util.evaluateWinnerFromScores(options).terminal
 		usedTerminals[stationId][result]=true 
 		return result
-	end 
-	
+	end
+
+	print("bus_line_tool: WARNING no free terminal at station " .. tostring(stationId) .. ", using terminal 0")
 	return 0 -- fallback
 end 
 
@@ -265,8 +293,17 @@ local function setupLine(positions, param, isCircleReturn)
 	local stations = {}
 	trace("Begin setting up line for bus line tool")
 	for i, p in pairs(positions) do
-		local nextStop = i == #positions and positions[1]  or positions[i+1]
-		local nextStopPos = getPosition(nextStop) 
+		-- The "next stop" only decides which side of the street the stop faces. A non-circle line
+		-- turns around at the last stop, so there the neighbour is the PREVIOUS stop, not the first.
+		local nextStop
+		if #positions == 1 then
+			nextStop = positions[1]
+		elseif param.circleLine or i < #positions then
+			nextStop = positions[i % #positions + 1]
+		else
+			nextStop = positions[i - 1]
+		end
+		local nextStopPos = getPosition(nextStop)
 		if type(p) == "number" then 
 			line.stops[1+#line.stops]=createStopForStation( p, nextStopPos)  
 			table.insert(stations, p)
@@ -284,14 +321,19 @@ local function setupLine(positions, param, isCircleReturn)
 			local left= util.distance(nextStopPos, p.p0) < util.distance(nextStopPos, p.p1)
 		 
 			local target = left and api.type.enum.EdgeObjectType.STOP_LEFT  or api.type.enum.EdgeObjectType.STOP_RIGHT 
-			for __, edgeObj in pairs(edge.objects) do 
-				if townName == "" then 
-					townName = api.engine.getComponent(api.engine.system.stationSystem.getTown(edgeObj[1]), api.type.ComponentType.NAME).name
+			for __, edgeObj in pairs(edge.objects) do
+				if townName == "" then
+					-- getTown returns -1 for a stop outside any town; the NAME lookup would then throw
+					local t = api.engine.system.stationSystem.getTown(edgeObj[1])
+					local n = t and t ~= -1 and api.engine.getComponent(t, api.type.ComponentType.NAME)
+					townName = n and n.name or ""
 				end
 				if edgeObj[2]==target then 
 					line.stops[1+#line.stops]=createStopForStation( edgeObj[1])  
 					table.insert(stations, edgeObj[1])
-				elseif i> 1 and i<#positions then  
+				elseif i> 1 and i<#positions and edgeObj[2] == (left and api.type.enum.EdgeObjectType.STOP_RIGHT or api.type.enum.EdgeObjectType.STOP_LEFT) then
+					-- the return leg uses the stop on the OTHER side of the same edge; any other
+					-- edge object (a sign, a different stop) is not a station and must not be a stop
 					table.insert(returnStops, edgeObj[1])
 				end 
 			end 
@@ -321,14 +363,16 @@ local function setupLine(positions, param, isCircleReturn)
 		name = name .. " " .. _("(reverse)")
 		colour = lineColorFn()
 	end
-	usedTerminals = {}
+	-- NOTE: usedTerminals is NOT reset here. A circle line is built as two setupLine passes and
+	-- both must see the same bookkeeping; builder.resetUsedTerminals() runs once per build.
 	if #line.stops > 1 then
 		trace("Creating line for bus stop")
 		api.cmd.sendCommand(api.cmd.make.createLine(name, colour, game.interface.getPlayer(), line),
 			function(res, success) 
 				trace("Result of create line command was",success)
-				if success then 
-					
+				if success then
+					local createdLineId = res.resultEntity
+
 					local function buyAndAssignVehicles() 
 						builder.addWork(function()
 							local carrier = param.createTramLine and api.type.enum.Carrier.TRAM or api.type.enum.Carrier.ROAD
@@ -353,11 +397,14 @@ local function setupLine(positions, param, isCircleReturn)
 						end)
 					end
 					if (param.addBusLanes or param.createTramLine) and not isCircleReturn then 
-						local callback = function(res, success) 
+						local callback = function(upgradeRes, success)
 								trace("Result of route upgrade was",success)
-								if success or not param.createTramLine then 
-									buyAndAssignVehicles()
-								end 
+								-- A failed street upgrade used to strand a tram line with no vehicles
+								-- and no message. Buy them anyway and say what has to be fixed by hand.
+								if not success then
+									print("bus_line_tool: WARNING street upgrade failed for line " .. tostring((upgradeRes and upgradeRes.resultEntity) or createdLineId) .. "; vehicles bought anyway, lay the track manually")
+								end
+								buyAndAssignVehicles()
 						end
 						builder.addWork(function() 
 							local params = paramHelper.getDefaultRouteBuildingParams("PASSENGERS", false, param.ignoreErrors) 
@@ -420,13 +467,16 @@ function builder.buildStopsProposal(edgeIds, positionsOut)
 		local entity = util.copyExistingEdge(edgeId, -j)
 		local p = util.getEdgeMidPoint(edgeId)
 		local objects = {}
+		-- No town within range (a map with no towns, or a stop far out in the country) means no
+		-- town name to number the stop under: fall back to a townless counter and a bare name.
 		local town = util.searchForNearestEntity(p, math.huge, "TOWN")
-		if not countByTown[town.id] then
-			countByTown[town.id] = util.countBusStopsForTown(town) + 1
+		local townKey = town and town.id or -1
+		if not countByTown[townKey] then
+			countByTown[townKey] = town and (util.countBusStopsForTown(town) + 1) or 1
 		else
-			countByTown[town.id] = countByTown[town.id] + 1
+			countByTown[townKey] = countByTown[townKey] + 1
 		end
-		local name = town.name .. " " .. _("stop") .. " " .. tostring(countByTown[town.id])
+		local name = (town and (town.name .. " ") or "") .. _("stop") .. " " .. tostring(countByTown[townKey])
 		for __, left in pairs({ true, false }) do
 			table.insert(objects, { -1 - #edgeObjectsToAdd, left and 0 or 1 })
 			local newStop = api.type.SimpleStreetProposal.EdgeObject.new()
@@ -466,7 +516,9 @@ end
 
 function builder.createBusLine(param)
 	trace("Received call to build busLine")
-	local createTramLine = param.createTramLine 
+	-- Once per build, so the forward and reverse legs of a circle line share the bookkeeping.
+	builder.resetUsedTerminals()
+	local createTramLine = param.createTramLine
 	local addBusLanes = param.addBusLanes  
 	local circleLine = param.circleLine  
 	local selectedEntities = param.selectedEntities  
@@ -485,6 +537,29 @@ function builder.createBusLine(param)
 			table.insert(stationsToExamine, {stationId = entityId, terminalsToAdd=terminalsToAdd, needsTram = createTramLine})
 		end 	
 	end 
+	-- Examine first (addWork is popped first), then set the line up (addDelayedWork).
+	local function scheduleLineSetup()
+		builder.addWork(function() examineStations(stationsToExamine, param) end)
+		builder.addDelayedWork(function()
+			setupLine(positions, param)
+		end)
+		if param.circleLine then
+			builder.addDelayedWork(function()
+				local reversed = {}
+				for i = #positions, 1, -1 do
+					table.insert(reversed, positions[i])
+				end
+				setupLine(reversed, param, true)
+			end)
+		end
+	end
+	-- Only existing stations were picked, so there is no stop to build. Sending an empty proposal
+	-- fails and the whole build is lost with it; go straight to the examine/setup pass instead
+	-- (this is what the line editor's applyEdit does for the same case).
+	if #edgeIds == 0 then
+		scheduleLineSetup()
+		return
+	end
 	-- the stop pairs are built by the shared proposal builder above, which the line editor uses too
 	local positionsByEdge = {}
 	local newProposal = builder.buildStopsProposal(edgeIds, positionsByEdge)
@@ -503,19 +578,7 @@ function builder.createBusLine(param)
 			if undo_script then 
 				undo_script.lastResult = res 
 			end
-			builder.addWork(function() examineStations(stationsToExamine, param) end)
-			builder.addDelayedWork(function() 
-				setupLine(positions, param)
-			end)
-			if param.circleLine then 
-				builder.addDelayedWork(function() 
-					local reversed = {}
-					for i = #positions, 1, -1 do 
-						table.insert(reversed, positions[i])
-					end 
-					setupLine(reversed, param, true)
-				end) 
-			end 
+			scheduleLineSetup()
 		end
 	end)
 end 
