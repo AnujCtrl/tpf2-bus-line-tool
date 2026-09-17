@@ -1,4 +1,4 @@
-# Bus line tool! (fixed fork)
+# Bus Line Tool Plus
 
 Fork of okeating's Transport Fever 2 mod "Bus line tool!" (Steam Workshop 2998909889).
 Personal use only: the upstream mod carries no licence.

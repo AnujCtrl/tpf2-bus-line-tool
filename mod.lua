@@ -5,9 +5,9 @@ return {
 			minorVersion = 2,
 			severityAdd = 'NONE',
 			severityRemove = 'NONE',
-			name = _('Bus line tool! (fixed fork)'),
+			name = _('Bus Line Tool Plus'),
 			description = _([[ 
-Local fork of okeating's Bus line tool (Workshop 2998909889): no crash on save load with many mods, tabbed window, numbered stop markers, route preview, auto line names, truck stops preserved, edit existing lines.
+Bus Line Tool Plus: fork of okeating's Bus line tool (Workshop 2998909889), maintained by AnujCtrl. No crash on save load with many mods, tabbed window, numbered stop markers, route preview, auto line names, truck stops preserved, edit existing lines.
 
 Original description:
 One area where I much prefer cities skylines is the relative ease of creating bus lines. TPF2 can be a little tedious, and this mod aims to solve this by letting you build bus (and tram) lines with just one click per stop!
@@ -30,6 +30,11 @@ Update version 1.1:
 				{
 					name = 'okeating',
 					role = 'CREATOR',
+				},
+				{
+					name = 'AnujCtrl',
+					role = 'CO-CREATOR',
+					text = 'Fork: crash fix, tabbed window, overlay, auto naming, line editing',
 				},
 			},
 			params = {}
