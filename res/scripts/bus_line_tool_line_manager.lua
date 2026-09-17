@@ -628,26 +628,39 @@ function lineManager.findDepotsForLine(lineId, carrier, nonStrict, isElectric)
 	local range = isRoadOrTramLine and 1500 or math.huge
 	for i, depotEntity in pairs(matchingTypes) do
 		--trace("Looking for closest to depot for depot ", depotEntity)
+		local depotPos = util.getDepotPosition(depotEntity)
+		-- findStopIndexesForDepot runs a path search per stop. Every option it can return is
+		-- thrown away below when the depot is further than `range` from the stop as the crow
+		-- flies, so a depot that far from EVERY stop is not worth searching from at all.
+		local nearAnyStop = range == math.huge
+		if not nearAnyStop then
+			for k = 1, #line.stops do
+				if util.distance(depotPos, getStopPosition(line, k-1)) <= range then
+					nearAnyStop = true
+					break
+				end
+			end
+		end
+		if nearAnyStop then
+			for i, stopIndex in pairs(pathFindingUtil.findStopIndexesForDepot(depotEntity, line, nonStrict, isElectric, range)) do
+				--trace("Found stopIndex=",stopIndex)
+				--trace("Getting stop pos")
+				local stopPos = getStopPosition(line, stopIndex)
+				if  util.distance(depotPos, stopPos) > range then
+					--trace("Skipping check as the gap is too big")
+					goto continue
+				end
+				if not optionsByStopIndex[stopIndex] then
+					optionsByStopIndex[stopIndex]={}
+				end
+				table.insert(optionsByStopIndex[stopIndex], {
+					stopIndex = stopIndex,
+					depotEntity = depotEntity,
+					scores = { util.distance(depotPos, stopPos) }
 
-		for i, stopIndex in pairs(pathFindingUtil.findStopIndexesForDepot(depotEntity, line, nonStrict, isElectric, range)) do 
-			--trace("Found stopIndex=",stopIndex)
-			local depotPos = util.getDepotPosition(depotEntity)
-			--trace("Getting stop pos")
-			local stopPos = getStopPosition(line, stopIndex)
-			if  util.distance(depotPos, stopPos) > range then
-				--trace("Skipping check as the gap is too big")
-				goto continue 
+				})
+				::continue::
 			end
-			if not optionsByStopIndex[stopIndex] then
-				optionsByStopIndex[stopIndex]={}
-			end
-			table.insert(optionsByStopIndex[stopIndex], {
-				stopIndex = stopIndex,
-				depotEntity = depotEntity,
-				scores = { util.distance(depotPos, stopPos) } 
-			
-			}) 	
-			::continue::
 		end
 	end
 	local result = {}
@@ -3170,7 +3183,13 @@ function lineManager.buyAndAssignVehiclesToLine(vehicleConfig, lineId, numberOfV
 			if success then 
 				lineManager.addWork(function() 
 					depotOptions = lineManager.findDepotsForLine(lineId, carrier)
-					assert(#depotOptions>0)
+					-- The depot was built but the line still cannot reach it. An assert here
+					-- killed the work item silently; say so and let the caller finish instead.
+					if #depotOptions == 0 then
+						print("bus_line_tool: WARNING no reachable depot for line " .. tostring(lineId))
+						callback({}, false)
+						return
+					end
 					buyAndAssignVechicles(vehicleConfig, depotOptions , lineId, numberOfVehicles, callback)
 				end)
 			else 
@@ -3181,8 +3200,10 @@ function lineManager.buyAndAssignVehiclesToLine(vehicleConfig, lineId, numberOfV
 		local stations = {} 
 		for i = 1, #line.stops do 
 			table.insert(stations, stationFromStop(line.stops[i]))
-		end 
-		constructionUtil.buildDepotAlongRoute(stations, params, carrier, newCallback)
+		end
+		-- `params` was an undeclared global here (always nil). getLineParams() is not an option:
+		-- it dereferences a paramHelper this module does not have.
+		constructionUtil.buildDepotAlongRoute(stations, {}, carrier, newCallback)
 	else 
 	
 		buyAndAssignVechicles(vehicleConfig,  depotOptions, lineId, numberOfVehicles, callback)

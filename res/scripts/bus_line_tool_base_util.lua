@@ -1056,11 +1056,11 @@ function util.isFrozenNode(node)
 			local found = false 
 			local construction = api.engine.getComponent(constructionId, api.type.ComponentType.CONSTRUCTION)
 			for i, frozenNode in pairs(construction.frozenNodes) do
-				if util.frozenNodeCache then 
-					util.frozenNodeCache[node]=constructionId
-				end 
-				if frozenNode == node then 
-					if util.frozenNodeCache then  
+				if frozenNode == node then
+					-- Cache only once this really is one of the construction's frozen nodes:
+					-- writing on every iteration marked unrelated nodes as frozen for good.
+					if util.frozenNodeCache then
+						util.frozenNodeCache[node]=constructionId
 						found = true 
 					else 
 						return constructionId
