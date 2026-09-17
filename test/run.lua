@@ -10,6 +10,7 @@ local files = {
   "test_naming",
   "test_station_modules",
   "test_line_editor",
+  "test_lint",
 }
 
 local passed, failed = 0, 0

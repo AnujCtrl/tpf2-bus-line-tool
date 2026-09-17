@@ -200,7 +200,7 @@ function lineEditor.applyEdit(param, deps)
 			if not success then return end
 			if param.name and param.name ~= "" and param.name ~= loaded.name then
 				local ok, err = pcall(function()
-					api.cmd.sendCommand(api.cmd.make.setName(param.lineId, param.name), function(_, ok2) print("bus_line_tool: rename " .. tostring(ok2)) end)
+					api.cmd.sendCommand(api.cmd.make.setName(param.lineId, param.name), function(__, ok2) print("bus_line_tool: rename " .. tostring(ok2)) end)
 				end)
 				if not ok then print("bus_line_tool: rename not supported: " .. tostring(err)) end
 			end
