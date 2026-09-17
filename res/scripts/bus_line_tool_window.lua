@@ -133,7 +133,7 @@ local function buildVehicleSelectionPanel(ctx, state, setStatus, refreshAll)
 			end
 			local selectedButton
 			local buttonGroup = api.gui.comp.ToggleButtonGroup.new(api.gui.util.Alignment.VERTICAL, 0, false)
-			for _, vehicle in pairs(vehicleUtil.findVehiclesOfType(index == 0 and "bus" or "tram")) do
+			for __, vehicle in pairs(vehicleUtil.findVehiclesOfType(index == 0 and "bus" or "tram")) do
 				local toggleButton = util.newToggleButton(vehicleUtil.describeVehicle(vehicle), vehicle.model.metadata.description.smallIcon)
 				if modelId == vehicle.modelId then
 					toggleButton:setSelected(true, false)
@@ -425,7 +425,7 @@ local function buildEditLineTab(ctx, state, stops, refreshAll)
 	function tab.refreshLineList()
 		lines = ctx.onLineListNeeded()
 		combo:clear(false)
-		for _, line in ipairs(lines) do combo:addItem(line.name) end
+		for __, line in ipairs(lines) do combo:addItem(line.name) end
 	end
 
 	combo:onIndexChanged(function(index)

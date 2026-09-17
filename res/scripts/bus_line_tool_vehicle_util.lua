@@ -658,7 +658,7 @@ local function discoverVehicles()
 			if filterClimate(name, vehicleType, model) then
 				availability.auto = true
 			end
-			for _, region in pairs({ "europe", "usa", "asia" }) do
+			for __, region in pairs({ "europe", "usa", "asia" }) do
 				if filterClimateOverride(name, vehicleType, model, region) then
 					availability[region] = true
 				end

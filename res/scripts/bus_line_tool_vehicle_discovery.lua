@@ -85,7 +85,7 @@ end
 
 local function legacyNamesToIgnore(names)
   local legacy = {}
-  for _, name in pairs(names) do
+  for __, name in pairs(names) do
     local suffix = string.sub(name, -7, -5)
     if suffix == "_v3" then
       legacy[string.sub(name, 1, -8) .. "_v2.mdl"] = true
@@ -109,7 +109,7 @@ end
 function discovery.run(env, wanted)
   local started = env.clock()
   local names = {}
-  for _, name in pairs(env.getAllModels()) do names[#names + 1] = name end
+  for __, name in pairs(env.getAllModels()) do names[#names + 1] = name end
   local legacy = legacyNamesToIgnore(names)
 
   local result = {
@@ -124,13 +124,13 @@ function discovery.run(env, wanted)
 
   local cargoTypes = {}
   for idx, name in pairs(env.getAllCargoTypes()) do cargoTypes[#cargoTypes + 1] = { idx = idx, name = name } end
-  for _, ct in ipairs(cargoTypes) do
+  for __, ct in ipairs(cargoTypes) do
     local weight = env.getCargoType(ct.idx).weight
     result.cargoWeightLookup[ct.idx] = weight
     result.cargoWeightLookup[ct.name] = weight
   end
 
-  for _, name in ipairs(names) do
+  for __, name in ipairs(names) do
     local vehicleType = discovery.vehicleTypeForName(name, wanted)
     if vehicleType and not legacy[name] then
       local ok, err = pcall(function()
@@ -141,15 +141,15 @@ function discovery.run(env, wanted)
         result.modelAvailability[id] = env.availability(name, vehicleType, copy)
 
         local capacity, cargoIdx, inverse = {}, {}, {}
-        for _, ct in ipairs(cargoTypes) do
+        for __, ct in ipairs(cargoTypes) do
           capacity[ct.idx] = 0
           capacity[ct.name] = 0
         end
         local tv = copy.metadata.transportVehicle
         if tv then
-          for _, compartment in pairs(tv.compartments) do
+          for __, compartment in pairs(tv.compartments) do
             for j, loadConfig in pairs(compartment.loadConfigs) do
-              for _, entry in pairs(loadConfig.cargoEntries) do
+              for __, entry in pairs(loadConfig.cargoEntries) do
                 local idx = env.findCargoType(entry.type)
                 capacity[entry.type] = (capacity[entry.type] or 0) + entry.capacity
                 capacity[idx] = (capacity[idx] or 0) + entry.capacity
@@ -181,7 +181,7 @@ function discovery.run(env, wanted)
   for vehicleType in pairs(result.counts) do vehicleTypes[#vehicleTypes + 1] = vehicleType end
   table.sort(vehicleTypes)
   local summary = {}
-  for _, vehicleType in ipairs(vehicleTypes) do summary[#summary + 1] = result.counts[vehicleType] .. " " .. vehicleType end
+  for __, vehicleType in ipairs(vehicleTypes) do summary[#summary + 1] = result.counts[vehicleType] .. " " .. vehicleType end
   env.log(("bus_line_tool: discovered %s models in %.0f ms (%d skipped)"):format(table.concat(summary, ", "), result.millis, #result.skipped))
   return result
 end

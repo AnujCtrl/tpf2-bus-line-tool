@@ -144,7 +144,7 @@ local function updateCircle()
 				if #path == 0 then
 					missing[#missing + 1] = i .. "→" .. (i % #stops + 1)
 				end
-				for _, e in ipairs(path) do
+				for __, e in ipairs(path) do
 					if not seen[e.entity] then
 						seen[e.entity] = true
 						local c = routeBuilder.edgeNeedsUpgrade(e.entity, previewParams) and overlay.UPGRADE_COLOUR or lineColour
@@ -287,7 +287,7 @@ end
 
 local function existingLineNames()
 	local names = {}
-	for _, lineId in pairs(api.engine.system.lineSystem.getLines()) do
+	for __, lineId in pairs(api.engine.system.lineSystem.getLines()) do
 		local name = api.engine.getComponent(lineId, api.type.ComponentType.NAME)
 		if name then names[#names + 1] = name.name end
 	end

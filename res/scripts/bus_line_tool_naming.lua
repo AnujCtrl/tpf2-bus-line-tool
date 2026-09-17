@@ -6,14 +6,14 @@ local function escape(s) return (s:gsub("%p", "%%%1")) end
 local function countWithPrefix(existingNames, prefix)
 	local count = 0
 	local pattern = "^" .. escape(prefix) .. " %d+$"
-	for _, name in ipairs(existingNames) do
+	for __, name in ipairs(existingNames) do
 		if name == prefix or name:match(pattern) then count = count + 1 end
 	end
 	return count
 end
 
 local function exists(existingNames, name)
-	for _, n in ipairs(existingNames) do if n == name then return true end end
+	for __, n in ipairs(existingNames) do if n == name then return true end end
 	return false
 end
 

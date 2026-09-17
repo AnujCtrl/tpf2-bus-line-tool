@@ -415,7 +415,7 @@ function builder.buildStopsProposal(edgeIds, positionsOut)
 	local edgeObjectsToAdd = {}
 	local newProposal = api.type.SimpleProposal.new()
 	local countByTown = {}
-	for _, edgeId in ipairs(edgeIds) do
+	for __, edgeId in ipairs(edgeIds) do
 		local j = 1 + #newProposal.streetProposal.edgesToAdd
 		local entity = util.copyExistingEdge(edgeId, -j)
 		local p = util.getEdgeMidPoint(edgeId)
@@ -427,7 +427,7 @@ function builder.buildStopsProposal(edgeIds, positionsOut)
 			countByTown[town.id] = countByTown[town.id] + 1
 		end
 		local name = town.name .. " " .. _("stop") .. " " .. tostring(countByTown[town.id])
-		for _, left in pairs({ true, false }) do
+		for __, left in pairs({ true, false }) do
 			table.insert(objects, { -1 - #edgeObjectsToAdd, left and 0 or 1 })
 			local newStop = api.type.SimpleStreetProposal.EdgeObject.new()
 			newStop.left = left
@@ -458,7 +458,7 @@ function builder.stationForBuiltStop(position, nextStopPos)
 	local edge = util.getEdge(edgeId)
 	local left = util.distance(nextStopPos, position.p0) < util.distance(nextStopPos, position.p1)
 	local target = left and api.type.enum.EdgeObjectType.STOP_LEFT or api.type.enum.EdgeObjectType.STOP_RIGHT
-	for _, edgeObj in pairs(edge.objects) do
+	for __, edgeObj in pairs(edge.objects) do
 		if edgeObj[2] == target then return edgeObj[1] end
 	end
 	return nil

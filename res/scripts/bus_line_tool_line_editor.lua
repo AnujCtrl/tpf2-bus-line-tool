@@ -26,7 +26,7 @@ end
 -- to build). Returns the surviving entries and their stations, same index in both lists.
 function lineEditor.resolvePlan(plan, resolveStation)
 	local entries, stations = {}, {}
-	for _, entry in ipairs(plan) do
+	for __, entry in ipairs(plan) do
 		local station = resolveStation(entry.entityId)
 		if station then
 			entries[#entries + 1] = entry
@@ -66,7 +66,7 @@ end
 function lineEditor.listLines(lineManager)
 	local result = {}
 	local player = api.engine.util.getPlayer()
-	for _, lineId in pairs(api.engine.system.lineSystem.getLines()) do
+	for __, lineId in pairs(api.engine.system.lineSystem.getLines()) do
 		local ok = pcall(function()
 			local line = api.engine.getComponent(lineId, api.type.ComponentType.LINE)
 			if not line or not lineManager.isBusOrTramLine(line) then return end
@@ -133,7 +133,7 @@ function lineEditor.applyEdit(param, deps)
 	-- Entities that still need a stop pair built on them. Remembered as a set, because once the
 	-- proposal is built the old edge ids are gone and util.getEdge() can no longer identify them.
 	local edgeIds, positions, isNewEdge = {}, {}, {}
-	for _, entry in ipairs(plan) do
+	for __, entry in ipairs(plan) do
 		if util.getEdge(entry.entityId) then
 			edgeIds[#edgeIds + 1] = entry.entityId
 			isNewEdge[entry.entityId] = true
@@ -168,7 +168,7 @@ function lineEditor.applyEdit(param, deps)
 
 	local function finish()
 		local builtStation = {}
-		for _, edgeId in ipairs(edgeIds) do
+		for __, edgeId in ipairs(edgeIds) do
 			local pos = positions[edgeId]
 			if pos then
 				local nextEntity
