@@ -1,7 +1,7 @@
 # Bus Line Tool Plus
 
-Fork of okeating's Transport Fever 2 mod "Bus line tool!" (Steam Workshop 2998909889).
-Personal use only: the upstream mod carries no licence.
+Transport Fever 2 mod for building and editing bus and tram lines with a few clicks.
+Inspired by okeating's "Bus line tool!".
 
 ## Install
 
