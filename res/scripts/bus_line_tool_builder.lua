@@ -246,6 +246,13 @@ local function chooseFreeTerminal(stationId, nextStopPos)
 		usedTerminals[stationId][result]=true 
 		return result
 	end
+	-- every free terminal was already handed out in this build: reusing one of them beats
+	-- terminal 0, which most likely belongs to another line
+	local free = getFreeTerminalsForStation(stationId)
+	if #free > 0 then
+		print("bus_line_tool: WARNING station " .. tostring(stationId) .. " has no unused free terminal; reusing terminal " .. tostring(free[1]))
+		return free[1]
+	end
 
 	print("bus_line_tool: WARNING no free terminal at station " .. tostring(stationId) .. ", using terminal 0")
 	return 0 -- fallback

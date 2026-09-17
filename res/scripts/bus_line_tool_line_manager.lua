@@ -628,12 +628,13 @@ function lineManager.findDepotsForLine(lineId, carrier, nonStrict, isElectric)
 	local range = isRoadOrTramLine and 1500 or math.huge
 	for i, depotEntity in pairs(matchingTypes) do
 		--trace("Looking for closest to depot for depot ", depotEntity)
-		local depotPos = util.getDepotPosition(depotEntity)
+		local okPos, depotPos = pcall(util.getDepotPosition, depotEntity)
 		-- findStopIndexesForDepot runs a path search per stop. Every option it can return is
 		-- thrown away below when the depot is further than `range` from the stop as the crow
 		-- flies, so a depot that far from EVERY stop is not worth searching from at all.
-		local nearAnyStop = range == math.huge
-		if not nearAnyStop then
+		local usable = okPos and depotPos ~= nil
+		local nearAnyStop = usable and range == math.huge
+		if usable and not nearAnyStop then
 			for k = 1, #line.stops do
 				if util.distance(depotPos, getStopPosition(line, k-1)) <= range then
 					nearAnyStop = true

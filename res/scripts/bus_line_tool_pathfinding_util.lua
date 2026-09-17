@@ -526,7 +526,7 @@ function pathFindingUtil.findRoadPathBetweenEntities(a, b, isTram)
 	end
 	-- Bounded like every other road search: with math.huge an unreachable stop made the preview
 	-- walk the whole road network, and the preview then disagreed with what the build would do.
-	local maxDistance = pathFindingUtil.calculateMaxRoadDistance(posA, posB)
+	local maxDistance = math.max(pathFindingUtil.calculateMaxRoadDistance(posA, posB), 5 * util.distance(posA, posB) + 3000) -- preview: generous so a legitimate detour is never reported as "no road path"
 	local ok, answer = pcall(pathFindingUtil.findPath, startingEdges, destNodes, { mode }, maxDistance)
 	if not ok then
 		trace("findRoadPathBetweenEntities failed", answer)
