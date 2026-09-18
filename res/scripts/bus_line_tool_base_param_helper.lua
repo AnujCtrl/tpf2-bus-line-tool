@@ -488,7 +488,10 @@ function paramHelper.getDefaultRouteBuildingParams(cargoType, isTrack, ignoreErr
 	end
 	local addBusLanes = false 
 	if not isCargo and not isTrack then 
-		addBusLanes =  #api.res.streetTypeRep.get(api.res.streetTypeRep.find(params.preferredCountryRoadType)).laneConfigs >= 6 -- two lanes for pedestrians
+		-- streetTypeRep.find returns -1 for a street type this game does not have (a mod road that
+		-- was removed); streetTypeRep.get(-1) then throws instead of answering the question.
+		local id = api.res.streetTypeRep.find(params.preferredCountryRoadType)
+		addBusLanes = id ~= -1 and #api.res.streetTypeRep.get(id).laneConfigs >= 6 or false -- two lanes for pedestrians
 	end
 	local trackWidth = 5
 	local edgeWidth = params.isTrack and (params.isDoubleTrack and 2*trackWidth or trackWidth) or util.getStreetWidth(params.preferredCountryRoadType)

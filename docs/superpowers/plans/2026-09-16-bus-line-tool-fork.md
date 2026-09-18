@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Repo: `~/Projects/tpf2-bus-line-tool`. All paths below are relative to it. Commit after every task with the trailer `Claude-Session: https://claude.ai/code/session_016Ji7iFUfxKbf3iV44jToGe`.
+- Repo: `~/Documents/personal/tpf2-mods/tpf2-bus-line-tool`. All paths below are relative to it. Commit after every task with the trailer `Claude-Session: https://claude.ai/code/session_016Ji7iFUfxKbf3iV44jToGe`.
 - Installed folder name: `bus_line_tool_fixed_1` under `~/.local/share/Steam/userdata/204184616/1066780/local/mods/` (via `./install.sh`).
 - Module names keep the `bus_line_tool_` prefix; the script event target stays `"bus_line_tool_script.lua"`.
 - Every zone the tool draws is named with prefix `blt_`.
@@ -192,7 +192,7 @@ return t
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd ~/Projects/tpf2-bus-line-tool && lua5.4 test/run.lua`
+Run: `cd ~/Documents/personal/tpf2-mods/tpf2-bus-line-tool && lua5.4 test/run.lua`
 Expected: `2 passed, 0 failed`
 
 - [ ] **Step 5: Rename the mod and add README and .gitignore**
@@ -258,7 +258,7 @@ See `docs/superpowers/specs/2026-09-16-bus-line-tool-fork-design.md`.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd ~/Projects/tpf2-bus-line-tool
+cd ~/Documents/personal/tpf2-mods/tpf2-bus-line-tool
 git add -A
 git commit -m "Add test harness with fake api, rename mod to fixed fork
 

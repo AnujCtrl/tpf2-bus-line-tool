@@ -4,6 +4,7 @@ local util = require("bus_line_tool_base_util")
 local paramHelper = require("bus_line_tool_base_param_helper")
 local vehicleUtil = require("bus_line_tool_vehicle_util")
 local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local upgradeRules = require("bus_line_tool_upgrade_rules")
 --local connectEval = require("bus_line_tool_new_connections_evaluation")
 local vec3 = require("vec3")
 local vec2 = require("vec2")
@@ -2009,7 +2010,6 @@ function routeBuilder.tryRoadRouteForUpgrade(routeInfo, callback, params)
 		params.preferredUrbanRoadType = params.preferredUrbanRoadTypeWithBus
 	end 
 	trace("About to get edge",routeInfo.firstFreeEdge, " of a total of ",#routeInfo.edges)
-	local firstEdge = routeInfo.edges[routeInfo.firstFreeEdge].edge
 	local preferredCountryStreetType = api.res.streetTypeRep.find(params.preferredCountryRoadType)
 	local preferredCountryStreetWidth = util.getStreetWidth(preferredCountryStreetType)
 	local preferredUrbanRoadType = api.res.streetTypeRep.find(params.preferredUrbanRoadType)
@@ -2089,10 +2089,9 @@ function routeBuilder.tryRoadRouteForUpgrade(routeInfo, callback, params)
 			preferredStreetType = entity.streetEdge.streetType 
 		end
 		entity.streetEdge.streetType = preferredStreetType
-		if not params.tramOnlyUpgrade then 
-			entity.streetEdge.hasBus = entity.streetEdge.hasBus or params.addBusLanes 
-		end
-		entity.streetEdge.tramTrackType = math.max(entity.streetEdge.tramTrackType, params.tramTrackType)
+		local target = upgradeRules.targets(entity.streetEdge, params)
+		entity.streetEdge.hasBus = target.hasBus
+		entity.streetEdge.tramTrackType = target.tramTrackType
 		return entity
 	end
 	
@@ -2137,7 +2136,7 @@ function routeBuilder.tryRoadRouteForUpgrade(routeInfo, callback, params)
 	 
   
 	if not isValid() then 
-		debugPrint({nodesToAdd=nodesToAdd, edgesToAdd=edgesToAdd})
+		if util.tracelog then debugPrint({nodesToAdd=nodesToAdd, edgesToAdd=edgesToAdd}) end
 		return false
 	end
  
@@ -2261,6 +2260,15 @@ function routeBuilder.checkRoadLineForUpgrade(callback, params, lineId)
 end 
 function routeBuilder.checkRoadRouteForUpgrade(callback, params, routeFn, stations) 
 	trace("Begin checking route for upgrade")
+	-- The bus-lane path runs tryRoadRouteForUpgrade twice (medium road first, then the real type)
+	-- and handed the same callback to both, so the caller was told the route was done twice --
+	-- which bought the vehicles twice. Every exit below goes through `once` instead.
+	local fired = false
+	local once = function(res, ok)
+		if fired then return end
+		fired = true
+		callback(res, ok)
+	end
 	util.lazyCacheNode2SegMaps()
 	 
 	 
@@ -2273,25 +2281,25 @@ function routeBuilder.checkRoadRouteForUpgrade(callback, params, routeFn, statio
 	end  
 	if not routeFn() then 
 		trace("WARNING! no route info found, aborting")
-		callback({}, false)
+		once({}, false)
 		return 
 	end
 	
  
-	local success = routeBuilder.tryRoadRouteForUpgrade(routeFn(), callback, params)   
+	local success = routeBuilder.tryRoadRouteForUpgrade(routeFn(), once, params)
 	if success then 
 		if originalPreferredCountryRoadType ~= params.preferredCountryRoadType then 
 			util.lazyCacheNode2SegMaps()
 			params.firstPass =  false
 			params.preferredCountryRoadType = originalPreferredCountryRoadType
-			success = routeBuilder.tryRoadRouteForUpgrade(routeFn(), callback, params)   
+			success = routeBuilder.tryRoadRouteForUpgrade(routeFn(), once, params)
 		end 
 	end
   
 	if not success and params.tramTrackType > 0 then 
 		trace("Attempting tram only upgrade") 
 		params.tramOnlyUpgrade = true 
-		success= routeBuilder.tryRoadRouteForUpgrade(routeFn(), callback, params)  
+		success= routeBuilder.tryRoadRouteForUpgrade(routeFn(), once, params)
 		if success then 
 			local newParams = util.deepClone(params) 
 			newParams.tramTrackType = 0
@@ -2302,7 +2310,7 @@ function routeBuilder.checkRoadRouteForUpgrade(callback, params, routeFn, statio
 	end
 	
 	if not success then 
-		callback({}, false)
+		once({}, false)
 	end
 	util.clearCacheNode2SegMaps()
 	
@@ -2324,28 +2332,37 @@ end
  
 function routeBuilder.checkRoadRouteForUpgradeBetweenStations(stations, callback, params, isCircle) 
 	
-	local function routeInfoFn() 
+	local function routeInfoFn()
+		-- A non-circle line turns around at the last stop, so the last->first leg is not part of
+		-- the route and must not be upgraded.
 		local startFrom = isCircle and 1 or 2
-		startFrom = 1
 		local result = {}
 		result.edges = {}
 		local alreadySeen = {}
 		for i = startFrom, #stations do
 			local priorStation = i == 1 and stations[#stations] or stations[i-1]
 			local routeInfo =  pathFindingUtil.getRoadRouteInfoBetweenStations(priorStation, stations[i])
-			for j = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do 
-				if not alreadySeen[routeInfo.edges[j].id]  then 
+			-- No road between these two stops: upgrade the legs that do exist rather than
+			-- indexing nil and losing the whole route.
+			if not routeInfo or not routeInfo.firstFreeEdge or not routeInfo.lastFreeEdge then
+				print("bus_line_tool: no road path between stops " .. i .. " and its predecessor; skipping that leg")
+				goto continue
+			end
+			for j = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do
+				if not alreadySeen[routeInfo.edges[j].id]  then
 					table.insert(result.edges, routeInfo.edges[j])
 					alreadySeen[routeInfo.edges[j].id] = true 
 				end
-				if i == #stations and j == routeInfo.lastFreeEdge then 
-					result.lastFreeEdge = #result.edges
-				end 
-			end 
-			if i == startFrom then 
-				result.firstFreeEdge = routeInfo.firstFreeEdge
 			end
+			::continue::
 		end
+		if #result.edges == 0 then
+			return nil
+		end
+		-- The merged list is its own route: the first leg's own index meant everything before it
+		-- was skipped on the merged edges.
+		result.firstFreeEdge = 1
+		result.lastFreeEdge = #result.edges
 		return result
 	end 
 	routeBuilder.checkRoadRouteForUpgrade(callback, params, routeInfoFn, stations) 
@@ -2516,7 +2533,7 @@ end
 function routeBuilder.buildOrUpgradeForBusRoute(station1, station2, callback,params)
 	--local params = paramHelper.getDefaultRouteBuildingParams(false, false)
 	local result = pathFindingUtil.findRoadPathStations(station1, station2)
-	if #result >0then 
+	if #result >0 then 
 		local count = 0 
 		local success = false
 		repeat
@@ -2530,6 +2547,13 @@ function routeBuilder.buildOrUpgradeForBusRoute(station1, station2, callback,par
 	else 
 		routeBuilder.buildRoadRouteBetweenStations({station1, station2}, callback, params, hasEntranceB)
 	end
+end
+
+-- Preview helper: true when building with `params` would change this street edge.
+function routeBuilder.edgeNeedsUpgrade(edgeId, params)
+	local street = api.engine.getComponent(edgeId, api.type.ComponentType.BASE_EDGE_STREET)
+	if not street then return false end
+	return upgradeRules.needsUpgrade({ hasBus = street.hasBus, tramTrackType = street.tramTrackType }, params)
 end
 
 return routeBuilder

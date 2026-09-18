@@ -9,5 +9,6 @@ mkdir -p "$DEST"
 rsync -a --delete \
   --exclude .git --exclude docs --exclude test --exclude install.sh \
   --exclude README.md --exclude .gitignore --exclude workshop_fileid.txt \
+  --exclude .superpowers \
   "$SRC/" "$DEST/"
 echo "installed to $DEST"

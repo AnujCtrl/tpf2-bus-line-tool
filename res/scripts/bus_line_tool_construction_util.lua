@@ -1954,7 +1954,9 @@ function constructionUtil.buildDepotAlongRoute(stations, params, carrier, callba
 	trace("Got command to build depot along route for",carrier)
 	local town = api.engine.system.stationSystem.getTown(stations[1])
 
-	local function routeInfoFn() 
+	local function routeInfoFn()
+		-- `isCircle` was an undeclared global here, so this always meant "not a circle".
+		local isCircle = false
 		local startFrom = isCircle and 1 or 2
 		local result = {}
 		result.edges = {}
@@ -1962,26 +1964,38 @@ function constructionUtil.buildDepotAlongRoute(stations, params, carrier, callba
 		for i = startFrom, #stations do
 			local priorStation = i == 1 and stations[#stations] or stations[i-1]
 			local routeInfo =  pathFindingUtil.getRoadRouteInfoBetweenStations(priorStation, stations[i])
-			for j = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do 
-				if not alreadySeen[routeInfo.edges[j].id]  then 
+			-- No road between these two stops: look for a depot along the legs that do exist.
+			if not routeInfo or not routeInfo.firstFreeEdge or not routeInfo.lastFreeEdge then
+				print("bus_line_tool: no road path between stops " .. i .. " and its predecessor; skipping that leg")
+				goto continue
+			end
+			for j = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do
+				if not alreadySeen[routeInfo.edges[j].id]  then
 					table.insert(result.edges, routeInfo.edges[j])
 					alreadySeen[routeInfo.edges[j].id] = true 
 				end
-				if i == #stations and j == routeInfo.lastFreeEdge then 
-					result.lastFreeEdge = #result.edges
-				end 
-			end 
-			if i == startFrom then 
-				result.firstFreeEdge = routeInfo.firstFreeEdge
 			end
+			::continue::
 		end
+		if #result.edges == 0 then
+			return nil
+		end
+		-- The merged list is its own route; the first leg's own index skipped edges of it.
+		result.firstFreeEdge = 1
+		result.lastFreeEdge = #result.edges
 		return result
-	end 
-	if carrier	 == api.type.enum.Carrier.TRAM then 
-		constructionUtil.buildTramDepotAlongRoute(routeInfoFn(),town, params, callback)
-	elseif  carrier	 == api.type.enum.Carrier.ROAD then 
-		constructionUtil.buildRoadDepotAlongRoute(routeInfoFn(),town, params, callback)
-	else 
+	end
+	local routeInfo = routeInfoFn()
+	if not routeInfo then
+		print("bus_line_tool: WARNING no road route along the line, cannot place a depot")
+		callback({}, false)
+		return
+	end
+	if carrier	 == api.type.enum.Carrier.TRAM then
+		constructionUtil.buildTramDepotAlongRoute(routeInfo,town, params, callback)
+	elseif  carrier	 == api.type.enum.Carrier.ROAD then
+		constructionUtil.buildRoadDepotAlongRoute(routeInfo,town, params, callback)
+	else
 		assert(false)
 	end
 end
@@ -2090,7 +2104,7 @@ function constructionUtil.buildTramDepotAlongRoute(routeInfo, town, params, call
 	local offset = 50
 
 	for i = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do 
-		collectgarbage()
+		-- (no collectgarbage() here: a full GC per route edge stalled the game for seconds)
 		local node = routeInfo.edges[i].edge.node1 
 		local nodeDetails = util.getPerpendicularTangentAndDetailsForEdge(routeInfo.edges[i].id)
 		for offset = 50, 70, 2 do 
@@ -2128,10 +2142,12 @@ function constructionUtil.buildTramDepotAlongRoute(routeInfo, town, params, call
 						table.insert(options, { tramDepot = tramDepot, node=sol.p, isSplit=true, tangent=sol.t, edgeId=edgeId, scores = {checkResult.costs}})
 					end
 				end
-				--if #options > 3 then 
-				--	break 
-				--end
-				::continue:: 
+				-- the author's own cap, re-enabled: a handful of candidates is plenty and the
+				-- collision check above is expensive
+				if #options > 3 then
+					break
+				end
+				::continue::
 			end
 		end
 		
@@ -2139,8 +2155,14 @@ function constructionUtil.buildTramDepotAlongRoute(routeInfo, town, params, call
 	if #options == 0 and not allowErrors then 
 		constructionUtil.buildTramDepotAlongRoute(routeInfo, town, params, callback, true)
 		return
-	end 
-	local option = util.evaluateWinnerFromScores(options) 
+	end
+	local option = util.evaluateWinnerFromScores(options)
+	-- the retry above already ran with allowErrors: nowhere along the route can take a depot
+	if not option then
+		print("bus_line_tool: WARNING found nowhere along the route to put a tram depot")
+		callback({}, false)
+		return
+	end
 	local newProposal = api.type.SimpleProposal.new()
 	trace("Gotten winner, setting up new proprosal")
 	--debugPrint(option.tramDepot)
@@ -2206,7 +2228,7 @@ function constructionUtil.buildRoadDepotAlongRoute(routeInfo, town, params, call
 	local offset = 50
 
 	for i = routeInfo.firstFreeEdge, routeInfo.lastFreeEdge do 
-		collectgarbage()
+		-- (no collectgarbage() here: a full GC per route edge stalled the game for seconds)
 		local node = routeInfo.edges[i].edge.node1 
 		local nodeDetails = util.getPerpendicularTangentAndDetailsForEdge(routeInfo.edges[i].id)
 		for offset = 40, 70, 2 do 
@@ -2245,9 +2267,11 @@ function constructionUtil.buildRoadDepotAlongRoute(routeInfo, town, params, call
 						table.insert(options, { tramDepot = tramDepot, node=sol.p, isSplit=true, tangent=sol.t, edgeId=edgeId, scores = {checkResult.costs}})
 					end
 				end
-				--if #options > 3 then 
-				--	break 
-				--end
+				-- the author's own cap, re-enabled: a handful of candidates is plenty and the
+				-- collision check above is expensive
+				if #options > 3 then 
+					break 
+				end
 				::continue:: 
 			end
 		end
@@ -2255,8 +2279,14 @@ function constructionUtil.buildRoadDepotAlongRoute(routeInfo, town, params, call
 	if #options == 0 and not allowErrors then 
 		constructionUtil.buildRoadDepotAlongRoute(routeInfo, town, params, callback, true)
 		return
-	end 
-	local option = util.evaluateWinnerFromScores(options) 
+	end
+	local option = util.evaluateWinnerFromScores(options)
+	-- the retry above already ran with allowErrors: nowhere along the route can take a depot
+	if not option then
+		print("bus_line_tool: WARNING found nowhere along the route to put a road depot")
+		callback({}, false)
+		return
+	end
 	local newProposal = api.type.SimpleProposal.new()
 	trace("Gotten winner, setting up new proprosal")
 	--debugPrint(option.tramDepot)

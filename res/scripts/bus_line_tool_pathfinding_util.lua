@@ -499,6 +499,42 @@ local function findStreetEdgeForStation(station)
 	end
 	return api.engine.getComponent(station, api.type.ComponentType.STATION).terminals[1].vehicleNodeId.entity
 end
+
+-- Road path between two entities that are each either a station id or a street edge id.
+-- Returns the list from findPath ({entity=, index=} per lane edge), possibly empty.
+function pathFindingUtil.findRoadPathBetweenEntities(a, b, isTram)
+	local function isEdge(id) return util.getEdge(id) ~= nil end
+	local mode = isTram and api.type.enum.TransportMode.TRAM or api.type.enum.TransportMode.BUS
+	local startingEdges
+	if isEdge(a) then
+		startingEdges = pathFindingUtil.getStartingEdgesForEdge(a, mode)
+	else
+		startingEdges = pathFindingUtil.getStartingEdgesForEdge(findStreetEdgeForStation(a), mode)
+	end
+	local posA = isEdge(a) and util.getEdgeMidPoint(a) or util.getStationPosition(a)
+	local posB = isEdge(b) and util.getEdgeMidPoint(b) or util.getStationPosition(b)
+	local destNodes
+	if isEdge(b) then
+		local edge = util.getEdge(b)
+		local targetNode = edge.node1
+		if util.distance(util.nodePos(edge.node0), posA) > util.distance(util.nodePos(edge.node1), posA) and not util.isOneWayStreet(b) then
+			targetNode = edge.node0
+		end
+		destNodes = pathFindingUtil.getDestinationNodesForEdge(b, mode, targetNode)
+	else
+		destNodes = pathFindingUtil.getDestinationNodesForStation(b)
+	end
+	-- Bounded like every other road search: with math.huge an unreachable stop made the preview
+	-- walk the whole road network, and the preview then disagreed with what the build would do.
+	local maxDistance = math.max(pathFindingUtil.calculateMaxRoadDistance(posA, posB), 5 * util.distance(posA, posB) + 3000) -- preview: generous so a legitimate detour is never reported as "no road path"
+	local ok, answer = pcall(pathFindingUtil.findPath, startingEdges, destNodes, { mode }, maxDistance)
+	if not ok then
+		trace("findRoadPathBetweenEntities failed", answer)
+		return {}
+	end
+	return answer
+end
+
 function pathFindingUtil.findRoadPathBetweenStationAndNode(station, node, nodePos )
 	local destNodes = pathFindingUtil.getDestinationNodesForStation(station)
 	if (not api.engine.entityExists(node) or not api.engine.getComponent(node, api.type.ComponentType.BASE_NODE)) and nodePos then 
@@ -575,7 +611,9 @@ function pathFindingUtil.findRoadPathStations(station1, station2, isTram)
 		end 
 	end 
 	--local destNodes = pathFindingUtil.getDestinationNodesForEdge(edge2,  api.type.enum.TransportMode.BUS)
-	local maxDistance = math.huge -- pathFindingUtil.calculateMaxRoadDistance(util.getStationPosition(station1), util.getStationPosition(station2)) 
+	-- math.huge made the A* search walk the whole road network before giving up on an unreachable
+	-- stop, which froze the game for seconds per leg.
+	local maxDistance = pathFindingUtil.calculateMaxRoadDistance(util.getStationPosition(station1), util.getStationPosition(station2))
 	local transportModes = {   api.type.enum.TransportMode.CAR,   api.type.enum.TransportMode.TRUCK ,api.type.enum.TransportMode.BUS} 
 	local transportModes = {  api.type.enum.TransportMode.BUS} 
 	if isTram then 
@@ -888,7 +926,7 @@ function pathFindingUtil.findPathFromDepotToStop(depotEntity, stop, nonStrict, l
 			transportModes = {api.type.enum.TransportMode.TRAM}
 		end 
 	else
-		trace("warning unable to determine transport type from",construction.fileName)
+		trace("warning unable to determine transport type for depot",depotEntity)
 		return false
 	end
 	local stationGroupId = stop.stationGroup

@@ -1,15 +1,19 @@
 local gui = require("gui")
 local vec2 = require("vec2")
-local vec3 = require("vec3")
 local util = require("bus_line_tool_base_util")
 local builder = require("bus_line_tool_builder")
 local lineManager = require("bus_line_tool_line_manager")
-local zoneutil = require "mission.zone"
 local constructionUtil = require("bus_line_tool_construction_util")
 local routeBuilder = require("bus_line_tool_route_builder")
 local vehicleUtil = require("bus_line_tool_vehicle_util")
+local windowModule = require("bus_line_tool_window")
+local overlay = require("bus_line_tool_overlay")
 local trace = util.trace
-local v3 = util.v3
+local pathFindingUtil = require("bus_line_tool_pathfinding_util")
+local naming = require("bus_line_tool_naming")
+local lineEditor = require("bus_line_tool_line_editor")
+local paramHelper = require("bus_line_tool_base_param_helper")
+local routeCache = {}
 
 local workItems = {}
 
@@ -19,10 +23,10 @@ end
 local function addDelayedWork(work) 
 	table.insert(workItems, 1, work)
 end 
+-- Every log line the README tells the user to grep for starts with "bus_line_tool:".
 local function err(x)
-	print("An error was caught",x)
+	print("bus_line_tool: error " .. tostring(x))
 	print(debug.traceback())
-	 
 end  
 local function standardCallback(res, success) 
 	trace("command was completed, success= ",success)
@@ -50,16 +54,13 @@ routeBuilder.standardCallback = standardCallback
  --pos = {0,0}
 --}
 
-local function hypot(x, y)
-	return math.sqrt(x*x + y*y)
-end
-
 local guiState = {
 	circles = {},
 	
 	selectedEntities = {},
+	stopMeta = {},
 	colours = {},
-	isActive = false 
+	isActive = false
 }
 
 local function nextColour()  
@@ -90,130 +91,13 @@ local function isMouseWithinWindow()
 	return false
 end
  
-local function addCircle(name, circle, colour, shape)
-	if not shape then 
-		shape = zoneutil.makeCircleZone(circle.pos , circle.radius, 16)
-	end
-	game.interface.setZone(name, {
-		polygon= shape,
-		draw=true,
-		drawColor = colour,
-	})
-	if not guiState.circles[name] then 
-		guiState.circles[name]=circle 
-	end
-end 
 local function removeCircle(name)
 	game.interface.setZone(name, nil)
 	guiState.circles[name]=nil
-end 
-local function v3to2d(v) 
-	return {v.x, v.y }
-end  
- 
- local function getShapeForEdge(edge) 
-	 
-	local w = util.getEdgeWidth(edge.id)/2
-	local p0 = util.v3fromArr(edge.node0pos)
-	local t0 = util.v3fromArr(edge.node0tangent)
-	local p1 = util.v3fromArr(edge.node1pos)
-	local t1 = util.v3fromArr(edge.node1tangent)
-	
-	local t0perp = vec3.normalize(util.rotateXY(t0, math.rad(90)))
-	local t1perp = vec3.normalize(util.rotateXY(t1, math.rad(90)))
-	
-	local p0right = p0+w*t0perp
-	local p0left = p0-w*t0perp
-	local p1right = p1+w*t1perp
-	local p1left = p1-w*t1perp
-	
-	local result = {}
-	
-	for i = 0, 6 do 
-		table.insert(result, v3to2d(util.hermite(i/6, p0right, t0, p1right, t1).p))
-	end
-	for i = 6, 0, -1 do 
-		table.insert(result, v3to2d(util.hermite(i/6, p0left, t0, p1left, t1).p))
-	end
-	
-	return result
- end
- local function getShapeForConstruction(entity ) 
-	local result = {}
-	local bbox 
-	pcall(function() bbox = api.engine.getComponent(entity, api.type.ComponentType.BOUNDING_VOLUME) end)
-	if not bbox then 
-		trace("Unable to find bbox for ",entity)
-		return 
-	end
-	 
-	local isInBox = function(p)   
-		return p.x >= bbox.bbox.min.x and p.x <= bbox.bbox.max.x  and p.y >= bbox.bbox.min.y  and p.y <= bbox.bbox.max.y
-	end	
-	local x = (bbox.bbox.max.x - bbox.bbox.min.x)/2
-	local y = (bbox.bbox.max.y - bbox.bbox.min.y)/2
-	local construction = api.engine.getComponent(entity, api.type.ComponentType.CONSTRUCTION)
-	local rotation  = vec3.xyAngle(construction.transf:cols(1))
-	local rotation  = vec3.xyAngle(construction.transf:cols(0))
-	local p  = v3(construction.transf:cols(3))
-	local t0 = v3(construction.transf:cols(0))
-	local t1 = v3(construction.transf:cols(1))
-	
-	trace("The rotation was",math.deg(rotation))
-	local points = {}
-	table.insert(points, vec3.new(bbox.bbox.min.x, bbox.bbox.min.y ,p.z)  )
-	table.insert(points, vec3.new(bbox.bbox.min.x, bbox.bbox.max.y  ,p.z )  )
-	table.insert(points, vec3.new(bbox.bbox.max.x, bbox.bbox.max.y  ,p.z)  )
-	table.insert(points, vec3.new(bbox.bbox.max.x, bbox.bbox.min.y  ,p.z)  )
-	-- somewhat crude, not sure how to access the true collider list
-	
-	local midP = 0.25*(points[1]+points[2]+points[3]+points[4]) 
-	--rotation = math.abs(rotation)%math.rad(90)
-	for i, point in pairs(points) do 
-		local vector = point - midP 
-	--	table.insert(result, v3to2d(midP + util.rotateXY(vector, rotation)))
-	end 
-	
-	p = midP
-	local maxExtent = math.ceil(hypot(x,y))
-	for i = 1, maxExtent do
-		local testP = p + i*t0 
-		--local entities = util.findIntersectingEntities(testP, 5, 50)
-		--if not util.contains(entities, entity.id) then 
-		if not isInBox(testP) then 
-			x = i
-			break
-		end 
-	end 
-	for i = 1, maxExtent do
-		--local testY = i*5 
-		local testP = p + i*t1 
-		--local entities = util.findIntersectingEntities(testP, 5, 50)
-		--if not util.contains(entities, entity.id) then 
-		if not isInBox(testP) then 
-			y = i
-			break
-		end 
-	end 
-	 
-	
-	table.insert(result, v3to2d(p + x*t0 + y*t1))
-	table.insert(result, v3to2d(p + x*t0 - y*t1))
-	table.insert(result, v3to2d(p - x*t0 - y*t1))
-	table.insert(result, v3to2d(p - x*t0 + y*t1))
-	
-	return result
- end
- 
- local function getShapeForEntity(entity) 
-	if entity.type == "BASE_EDGE" then 
-		return getShapeForEdge(entity)
-	else 
-		return getShapeForConstruction(api.engine.system.streetConnectorSystem.getConstructionEntityForStation(entity.id))
-	end 
- end 
- 
- local function getPosition(entityId) 
+	guiState.needsRedrawRoute = true
+end
+
+ local function getPosition(entityId)
 	if util.getEdge(entityId) then 
 		return  util.getEdgeMidPoint(entityId)
 	else 
@@ -221,109 +105,141 @@ end
 	end 
  end 	
  
-local function updateCircle() 
-	local colour = {128,128,128,0.25} -- transparent white 
-	if guiState.needsRedrawRoute then 
+-- Tram track type the preview should require: mirrors the build rule (electric tram + catenary year).
+local function previewTramTrackType()
+	if not (guiState.ui and guiState.ui.isTram()) then return 0 end
+	if guiState.ui.mode() == "edit" then return util.getCurrentTramTrackType() end
+	local catenary = util.year() >= api.res.getBaseConfig().tramCatenaryYearFrom
+	return (catenary and guiState.ui.isElectricTramSelected()) and 2 or 1
+end
+
+-- A leg with no road path cannot be built by the engine, so the New tab's Build button is
+-- gated on this. Re-gate only when the flag actually flips, so the redraw stays cheap.
+local function setRouteMissing(value)
+	if guiState.routeMissing == value then return end
+	guiState.routeMissing = value
+	if guiState.ui then addWork(function() guiState.ui.refreshStops() end) end
+end
+
+local function updateCircle()
+	if guiState.needsRedrawRoute then
 		guiState.needsRedrawRoute = false -- do upfront to avoid repeated exceptions
-		local key = "bus_line_tool_route"
-		if #guiState.selectedEntities > 1 then 
-			local shape = {}
-			for i = 1, #guiState.selectedEntities do 
-				local p = getPosition(guiState.selectedEntities[i])
-				table.insert(shape, v3to2d(p))
-			end 
-			if not guiState.isCircle then 
-				for i = #guiState.selectedEntities, 1, -1 do 
-					table.insert(shape, shape[i])
-				end 
-			end 
-			addCircle(key, true, colour, shape)
-		else 
-			removeCircle(key)
-		end 
-	
-	end 
-	if isMouseWithinWindow() then 
+		local stops = {}
+		for i, entityId in ipairs(guiState.selectedEntities) do
+			local p = getPosition(entityId)
+			stops[i] = { id = entityId, pos = { p.x, p.y }, colour = guiState.colours[i], pending = guiState.stopMeta[i] and guiState.stopMeta[i].pending }
+		end
+		overlay.setStops(stops)
+		if #stops > 1 then
+			local isTram = guiState.ui and guiState.ui.isTram() or false
+			local previewParams = {
+				addBusLanes = guiState.ui and guiState.ui.addBusLanes() or false,
+				tramTrackType = previewTramTrackType(),
+			}
+			local colour = guiState.ui and guiState.ui.lineColour() or { 0.5, 0.5, 0.5 }
+			local lineColour = { colour[1], colour[2], colour[3], 0.3 } -- 0..1 channels, like lineColors
+			local edges, seen, missing = {}, {}, {}
+			local pairsToDraw = #stops - 1
+			if guiState.isCircle then pairsToDraw = #stops end
+			for i = 1, pairsToDraw do
+				local a = stops[i].id
+				local b = stops[i % #stops + 1].id
+				local key = a .. ":" .. b .. ":" .. tostring(isTram)
+				if not routeCache[key] then
+					routeCache[key] = pathFindingUtil.findRoadPathBetweenEntities(a, b, isTram)
+				end
+				local path = routeCache[key]
+				if #path == 0 then
+					missing[#missing + 1] = i .. "→" .. (i % #stops + 1)
+				end
+				for __, e in ipairs(path) do
+					if not seen[e.entity] then
+						seen[e.entity] = true
+						local c = routeBuilder.edgeNeedsUpgrade(e.entity, previewParams) and overlay.UPGRADE_COLOUR or lineColour
+						edges[#edges + 1] = { edgeId = e.entity, colour = c }
+					end
+				end
+			end
+			overlay.setRouteEdges(edges)
+			local points = {}
+			for i, stop in ipairs(stops) do points[i] = stop.pos end
+			if guiState.isCircle then points[#points + 1] = stops[1].pos end
+			if #missing > 0 then
+				overlay.setFallbackPolyline(points, overlay.FALLBACK_COLOUR)
+				if guiState.ui then guiState.ui.setStatus(_("No road path between stops ") .. table.concat(missing, ", ")) end
+			else
+				overlay.setFallbackPolyline({}, nil)
+			end
+			setRouteMissing(#missing > 0)
+		else
+			overlay.setRouteEdges({})
+			overlay.setFallbackPolyline({}, nil)
+			setRouteMissing(false)
+		end
+	end
+	if isMouseWithinWindow() then
 		--trace("Suppressed update circle due to in window")
-		return 
+		return
 	end
 	local pos = game.gui.getTerrainPos()
-	if not pos then 
+	if not pos then
 		-- trace("No position found")
-		return  
+		return
 	end
-	local circles = guiState.circles
-	if not circles["mouse"] then 
-		circles["mouse"]={}
-	end
-	 
-	local circle = circles["mouse"]
+	local circle = guiState.circles["mouse"] or {}
+	guiState.circles["mouse"] = circle
 	local prevX = circle.pos and circle.pos[1]
 	local prevY = circle.pos and circle.pos[2]
-	
 	circle.pos = pos
 	circle.radius = 50
-	local entity =util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "STATION", 
-		function(station) 
-			return
-				not station.cargo 
-				and station.carriers.ROAD
-		end
-		)
-	if not entity then 
-		entity =util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "BASE_EDGE", 
-		function(edge) 
-			return
-				not edge.track 
-				and not util.isFrozenEdge(edge.id) 
-				and #util.getEdge(edge.id).objects == 0
-				and util.getEdgeLength(edge.id) > 40
-		end
-		)
+	local entity = util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "STATION",
+		function(station) return not station.cargo and station.carriers.ROAD end)
+	if not entity then
+		entity = util.searchForNearestEntity(util.v3fromArr(circle.pos), circle.radius, "BASE_EDGE",
+			function(edge)
+				return not edge.track and not util.isFrozenEdge(edge.id)
+					and #util.getEdge(edge.id).objects == 0 and util.getEdgeLength(edge.id) > 40
+			end)
 	end
 	guiState.entity = entity
-	local shape
-	if entity then 
-		--trace("Found entity ",entity.id,"near",  circle.pos[1],    circle.pos[2]) 
-		circle.pos =  util.v3ToArr(getPosition(entity.id)) 
-		--colour = {0,128,0,0.25} 
-		 
-		shape = getShapeForEntity(entity)
-		  
-		
-	end 
-	local circleChanged = prevX ~= circle.pos[1] or prevY ~= circle.pos[2]
- 
-	 
-	--trace("In updateCircle, circleChanged?",circleChanged, prevX,circle.pos[1], prevY, circle.pos[2] )
-	if circleChanged then --performance optimisation
-		addCircle("mouse", circle, colour, shape)
+	if entity then
+		circle.pos = util.v3ToArr(getPosition(entity.id))
 	end
-	
-	
-end 
+	local circleChanged = prevX ~= circle.pos[1] or prevY ~= circle.pos[2]
+	if circleChanged then
+		overlay.setHover(entity)
+		if guiState.ui then
+			if not entity then
+				guiState.ui.setStatus(_("Nothing selectable here"))
+			elseif entity.type == "BASE_EDGE" then
+				guiState.ui.setStatus(_("Street segment: click to add a stop"))
+			else
+				local name = api.engine.getComponent(entity.id, api.type.ComponentType.NAME)
+				guiState.ui.setStatus(_("Station: ") .. (name and name.name or "?") .. _(" — click to add"))
+			end
+		end
+	end
+end
 
 
 
-local function removeCircles() 
-	for k, v in pairs(guiState.circles) do 
+local function removeCircles()
+	overlay.clear()
+	for k, v in pairs(guiState.circles) do
 		removeCircle(k)
 	end 
 	guiState.entity = nil
 	guiState.selectedEntities = {}
-	guiState.colours = {} 
+	guiState.colours = {}
+	guiState.stopMeta = {}
+	routeCache = {}
+	guiState.editLine = nil
+	guiState.routeMissing = false
 
 end
 
-  
-local function newImageView()
-	local icon = api.gui.comp.ImageView.new(" ")
-	icon:setMaximumSize(api.gui.util.Size.new(60,60))
-	return icon
-end
- 
 
-local mouseListener = function(MouseEvent) 
+local mouseListener = function(MouseEvent)
 	local wasHandled = false
 	if guiState.isActive then 
 		xpcall(
@@ -331,393 +247,157 @@ local mouseListener = function(MouseEvent)
 			if  guiState.entity and MouseEvent.type == 2 and MouseEvent.button == 0 and not isMouseWithinWindow() then 
 				--debugPrint(MouseEvent)
 				guiState.needsRedrawRoute = true
-				local circle = guiState.circles["mouse"]
 				local entityId = guiState.entity.id
 				trace("Processing mouseEvent the selected entity was ", entityId)
-				local entityString = "bus_line_tool"..tostring(entityId)
+				local mode = guiState.ui and guiState.ui.mode() or "new"
 				local idx = util.indexOf(guiState.selectedEntities, entityId)
-				if idx ~= -1 then --treat as deselection 
+				-- Only a new line deselects on a second click. An edited line may legitimately
+				-- visit the same station twice (A-B-C-B), so in edit mode a click always inserts;
+				-- rows are removed with the row's own remove button.
+				if mode == "new" and idx ~= -1 then --treat as deselection
 					table.remove(guiState.selectedEntities, idx)
 					table.remove(guiState.colours, idx)
-					removeCircle(entityString) 
-					--game.interface.setMarker(entityString)
-				else 
+					table.remove(guiState.stopMeta, idx)
+				else
 					local colour = nextColour()
-					local shape = getShapeForEntity(guiState.entity)
-					addCircle(entityString, circle, colour, shape)
-					--game.interface.setMarker(entityString, entityId)
-					table.insert(guiState.selectedEntities, entityId) 
-					table.insert(guiState.colours, colour)
-				end 
-				addWork(guiState.refreshTable)
+					local insertAt = #guiState.selectedEntities + 1
+					if mode == "edit" and guiState.ui.selectedRow() >= 0 then
+						insertAt = math.min(guiState.ui.selectedRow() + 2, #guiState.selectedEntities + 1)
+					end
+					-- "pending" means a stop that still has to be built: only a street edge added
+					-- to an existing line is. New-line stops are all built by Build, so they draw
+					-- at the full marker alpha.
+					local meta = {}
+					if mode == "edit" and util.getEdge(entityId) ~= nil then meta = { pending = true } end
+					table.insert(guiState.selectedEntities, insertAt, entityId)
+					table.insert(guiState.colours, insertAt, colour)
+					table.insert(guiState.stopMeta, insertAt, meta)
+				end
+				addWork(function() guiState.ui.refreshStops() end)
 				wasHandled = true
 			end
 		end,
 		err)
 	end
 	return wasHandled
-end 
-
-local function newButton(text) 
-	local button = api.gui.comp.Button.new(api.gui.comp.TextView.new(text),true)
-	button:addStyleClass("BusLineToolButton")
-	return button
-end
- 
-local function buildVehicleSelectionPanel() 
-	local boxLayout = api.gui.layout.BoxLayout.new("HORIZONTAL");
-	boxLayout:addItem(api.gui.comp.TextView.new(_("Vehicle:")))
-	local selectedVehicle = api.gui.comp.ImageView.new(" ")
-	boxLayout:addItem(selectedVehicle)
-	local chooseButton = util.newButton("","ui/button/small/line_tasks@2x.tga")
-	boxLayout:addItem(chooseButton)
-	
-	boxLayout:addItem(api.gui.comp.TextView.new(_("Count:")))
-	local countInput = api.gui.comp.TextInputField.new("0")
-	boxLayout:addItem(countInput)
-	local priorYear
-	local priorIndex
-	local chooserLayout = api.gui.layout.BoxLayout.new("VERTICAL")
-	
-	local window = api.gui.comp.Window.new(_("Vehicle selection"), chooserLayout)
-	window:setVisible(false, false)
-	window:addHideOnCloseHandler()
-	guiState.window2 = window
-	chooseButton:onClick(function() 
-		window:setVisible(true, false)
-		local mousePos = api.gui.util.getMouseScreenPos()
-		window:setPosition(mousePos.x,mousePos.y)
-	end)
-	local screenSize = api.gui.util.getGameUI():getMainRendererComponent():getContentRect()
- 
-	window:setMaximumSize(api.gui.util.Size.new(math.floor((1/3)*screenSize.w),math.floor((3/4)*screenSize.h)))
-	local lastComputedCount = 0
-	local vehicleConfig
-	
-	return {
-		comp = boxLayout,
-		refresh = function(index) 
-			if index == 0 then 
-				vehicleConfig = vehicleUtil.buildUrbanBus() 
-			else 
-				vehicleConfig = vehicleUtil.buildTram() 
-			end 
-			local originalVehicleConfig = vehicleConfig
-			local function populateIcon(modelId) 
-				local model = vehicleUtil.getModel(modelId) 
-				local name = model.metadata.description.name
- 
-				local icon = model.metadata.description.icon20
-			 
-				selectedVehicle:setImage(icon, true)
-				selectedVehicle:setTooltip(name)
-			end 
-			local modelId = vehicleConfig.vehicles[1].part.modelId
-			if priorYear ~= util.year() or priorIndex ~= index then 
-				priorYear = util.year() 
-				priorIndex = index
-				--chooserLayout:deleteAll()
-				for i = chooserLayout:getNumItems()-1, 0, -1 do 
-					chooserLayout:removeItem(chooserLayout:getItem(i))
-				end 
-				local selectedButton
-				local buttonGroup = api.gui.comp.ToggleButtonGroup.new(api.gui.util.Alignment.VERTICAL, 0, false)
-				for i, vehicle in pairs(vehicleUtil.findVehiclesOfType(index == 0 and "bus" or "tram")) do 
-					local model = vehicle.model
-					trace("Setting up vehicle",i," of id ",vehicle.modelId)
-					local name = model.metadata.description.name
-					if util.tracelog then 
-						name = name.." "..tostring(vehicle.modelId)
-					end 
-					local icon = model.metadata.description.smallIcon 
-					if not icon then debugPrint(model.metadata.description) end
-					local toggleButton = util.newToggleButton(name, icon)
-					if modelId == vehicle.modelId then 
-						toggleButton:setSelected(true, false) 
-						selectedButton = toggleButton
-					end
-					toggleButton:onToggle(function(b) 
-						addWork(function() 
-							vehicleConfig = vehicleUtil.copyConfig(vehicleUtil.createVehicleConfig(vehicle.modelId))
-							populateIcon(vehicle.modelId) 
-						end)
-					end)
-					buttonGroup:add(toggleButton)
-				end 
-				buttonGroup:setOneButtonMustAlwaysBeSelected(true)
-				local size = buttonGroup:calcMinimumSize()
-				trace("THe min size was ",size.h, size.w)
-				local screenSize = api.gui.util.getGameUI():getMainRendererComponent():getContentRect()
-				local maximum = (2/3)*screenSize.h
-				
-				local scrollArea = api.gui.comp.ScrollArea.new(api.gui.comp.Component.new(" "), " ")
-				scrollArea:setContent(buttonGroup)
-				--scrollArea:setVerticalScrollBarPolicy(api.gui.comp.ScrollBarPolicy.ALWAYS_ON)
-				if size.h > maximum or true then 
-					maximum = maximum / 2
-					trace("Setting maxmimum size on scroll area, maximum was ",maximum)
-					scrollArea:setMaximumSize(api.gui.util.Size.new(size.w,math.floor(maximum)))
-					--buttonGroup:setMaximumSize(api.gui.util.Size.new(size.w,math.floor(maximum)))
-				end 
-				chooserLayout:addItem(scrollArea)
-				local acceptButton = util.newButton("","ui/button/small/accept@2x.tga")
-				local resetButton = util.newButton("","ui/button/small/vehicle_replace_active@2x.tga")
-				local cancelButton = util.newButton("","ui/button/small/cancel@2x.tga")
-				trace("Creating button panel")
-				local buttonPanel = api.gui.layout.BoxLayout.new("HORIZONTAL");
-				local function reset() 
-					addWork(function() 
-						selectedButton:setSelected(true, true) 
-					end)
-				end
-				buttonPanel:addItem(acceptButton)
-				buttonPanel:addItem(resetButton) 
-				buttonPanel:addItem(cancelButton)
-				chooserLayout:addItem(buttonPanel)
-				acceptButton:onClick(function() window:close() end)
-				resetButton:onClick(reset)
-				cancelButton:onClick(function() 
-					reset()
-					window:close()
-				end)
-			end 
-			populateIcon(modelId) 
-		end,
-		getVehicleConfig = function() 
-			return vehicleConfig 
-		end,
-		updateCount = function( ) 
-			local numStops = #guiState.selectedEntities
-			if not guiState.circleLine then 
-				numStops = numStops * 2 - 2
-			end
-			local computedCount = numStops < 2 and 0 or math.min(100, math.max(2, math.floor(numStops/2)))
-			if lastComputedCount ~= computedCount then 
-				lastComputedCount = computedCount 
-				countInput:setText(tostring(computedCount), false)
-			end 
-		end,
-		getNumberOfVehicles = function() 
-			local result 
-			if not pcall(function() result = tonumber(countInput:getText()) end) then
-				result = lastComputedCount
-			end 
-			return result
-		end 
-	}
 end
 
-
-
-local function buildBusLinePanel()
-	trace("Begin buildBusLinePanel")
-	local boxlayout = api.gui.layout.BoxLayout.new("VERTICAL");
-    
-	local colHeaders = {
-		api.gui.comp.TextView.new(_("Segment")),
-		api.gui.comp.TextView.new(_("Distance")),
-		api.gui.comp.TextView.new(" "),
-	}
-	
-	local numColumns = #colHeaders
-	local selectable = "SELECTABLE"
-	local tramIcon ="/ui/hud/station_tram@2x.tga" -- station_bus@2x -- vehicle_tram@2x
-	--\ui\button\medium
-	local tramOrBus = api.gui.comp.ToggleButtonGroup.new(api.gui.util.Alignment.HORIZONTAL, 0, false)
-	local createTramLine = util.newToggleButton("TRAM", "ui/button/medium/vehicle_tram@2x.tga") 
-	local createBusLine = util.newToggleButton("BUS",  "ui/button/medium/vehicle_bus@2x.tga") 
-	
-	tramOrBus:add(createBusLine)
-	tramOrBus:add(createTramLine)
-	tramOrBus:setOneButtonMustAlwaysBeSelected(true)
-	local addBusLanes = api.gui.comp.CheckBox.new(_("Add bus lanes?"))
-	local circleLine = api.gui.comp.CheckBox.new(_("CircleLine?"))
-	
-	trace("Setting up display table")
-	local displayTable = api.gui.comp.Table.new(numColumns, selectable)
-	displayTable:setHeader(colHeaders)
-	local acceptButton = util.newButton("","ui/button/small/accept@2x.tga")
-	local vehicleSelection = buildVehicleSelectionPanel()
-	function guiState.refreshTable() 
-		displayTable:deleteAll()
-		vehicleSelection.updateCount()
-		for i, entityId in pairs(guiState.selectedEntities) do 
-			local distanceDisplay = api.gui.comp.TextView.new(" ")
-			if i > 1 or circleLine:isSelected() and #guiState.selectedEntities > 1then 
-				local priorEntity = i == 1 and guiState.selectedEntities[#guiState.selectedEntities] or guiState.selectedEntities[i-1]
-				distanceDisplay:setText(api.util.formatLength(util.distance(getPosition(entityId),getPosition(priorEntity))))
-			end 
-			local cancelButton = util.newButton("","ui/button/small/cancel@2x.tga")
-			
-			
-			cancelButton:onClick(function() 
-				addWork(function()
-					local index = util.indexOf(guiState.selectedEntities, entityId) -- need to recompute index in case others were removed
-					displayTable:deleteRows(index-1, index)
-					table.remove(guiState.selectedEntities, index)
-					removeCircle("bus_line_tool"..tostring(entityId))
-					acceptButton:setEnabled(#guiState.selectedEntities > 1, false)
-					guiState.needsRedrawRoute = true
-				end)
-			end)
-			displayTable:addRow({ util.makelocateRowForEdge(entityId, guiState.colours[i]), distanceDisplay, cancelButton }) 
-		end 
-		acceptButton:setEnabled(#guiState.selectedEntities > 1, false)
+local function townNameForEntity(entityId)
+	local townId
+	if util.getEdge(entityId) then
+		local town = util.searchForNearestEntity(util.getEdgeMidPoint(entityId), math.huge, "TOWN")
+		return town and town.name
 	end
-	
-	tramOrBus:onCurrentIndexChanged(function(i)
-		addWork(function() 
-			vehicleSelection.refresh(i)
-		end)
-	end)
+	local ok, id = pcall(api.engine.system.stationSystem.getTown, entityId)
+	if ok and id and id ~= -1 then
+		local name = api.engine.getComponent(id, api.type.ComponentType.NAME)
+		return name and name.name
+	end
+	return nil
+end
 
-	trace("Adding items to layout")
-	createBusLine:setSelected(true, true)
-	boxlayout:addItem(displayTable)
-	boxlayout:addItem(api.gui.comp.Component.new("HorizontalLine"))
-	boxlayout:addItem(tramOrBus)
-	boxlayout:addItem(vehicleSelection.comp)
-	boxlayout:addItem(api.gui.comp.Component.new("HorizontalLine"))
-	boxlayout:addItem(addBusLanes)
-	boxlayout:addItem(circleLine)
-	circleLine:onToggle(function(b) 
-		guiState.isCircle = b 
-		guiState.needsRedrawRoute = true
-		addWork(vehicleSelection.updateCount)
-	end)
-	
-	local resetButton = util.newButton("","ui/button/small/vehicle_replace_active@2x.tga")
-	local cancelButton = util.newButton("","ui/button/small/cancel@2x.tga")
-	trace("Creating button panel")
-	local ignoreErrors = api.gui.comp.CheckBox.new(_("Ignore validation?"))
-	ignoreErrors:setTooltip(_("Toggle on to ignore collisions etc. (\"Construction not possible\" cannot be ignored)"))
-	boxlayout:addItem(ignoreErrors)
-	local buttonPanel = api.gui.layout.BoxLayout.new("HORIZONTAL");
-	buttonPanel:addItem(acceptButton)
-	buttonPanel:addItem(resetButton) 
-	buttonPanel:addItem(cancelButton)
-	
-	acceptButton:onClick(function() 
-		addWork(function() 
-			local param = {} 
-			param.createTramLine = createTramLine:isSelected()
-			param.addBusLanes = addBusLanes:isSelected()
-			param.circleLine = circleLine:isSelected()
-			param.selectedEntities = guiState.selectedEntities
-			param.ignoreErrors = ignoreErrors:isSelected()
-			param.vehicleConfig = vehicleSelection.getVehicleConfig()
-			param.numberOfVehicles = vehicleSelection.getNumberOfVehicles()
-			api.cmd.sendCommand(api.cmd.make.sendScriptEvent("bus_line_tool_script.lua","createBusLine", "", param), standardCallback)
-			removeCircles() 
-			acceptButton:setEnabled(false, false)
-			--vehicleSelection.updateCount()
-			guiState.isActive=false
-		end)
-	end)
-	acceptButton:setEnabled(false, false)
-	resetButton:onClick(function()
-		addWork(function()
-			removeCircles() 
-			updateCircle()
-			displayTable:deleteAll()
-			acceptButton:setEnabled(false, false)
-			vehicleSelection.refresh(tramOrBus:getSelectedIndex())
-			addWork(vehicleSelection.updateCount)
-		end)
-		guiState.isActive=true
-	end)
-	
-	cancelButton:onClick(function() 
-		guiState.window:close()
-	end)
-	
-   -- local button =  newButton(_('Execute Upgrade'))
-	--button:onClick(function() xpcall(executeUpgrade,err)	end)
-	boxlayout:addItem(api.gui.comp.Component.new("HorizontalLine"))
-	boxlayout:addItem(buttonPanel) 
-	local comp= api.gui.comp.Component.new(" ")
-	comp:setLayout(boxlayout)
-	trace("End buildBusLinePanel")
-	return {
-		comp=comp,
-		refresh = function() 
-			displayTable:deleteAll()
-		--	populateCategories()
-		--	populateChoices() 
-		end
-	}
-end 
+local function existingLineNames()
+	local names = {}
+	for __, lineId in pairs(api.engine.system.lineSystem.getLines()) do
+		local name = api.engine.getComponent(lineId, api.type.ComponentType.NAME)
+		if name then names[#names + 1] = name.name end
+	end
+	return names
+end
 
+local function suggestedLineName()
+	local towns = {}
+	for i, entityId in ipairs(guiState.selectedEntities) do
+		local ok, town = pcall(townNameForEntity, entityId)
+		towns[i] = (ok and town) or false -- false, not nil: keeps the list without holes
+	end
+	return naming.suggest({
+		carrier = guiState.ui and guiState.ui.isTram() and _("Tram") or _("Bus"),
+		towns = towns,
+		isCircle = guiState.isCircle or false,
+		existingNames = existingLineNames(),
+	})
+end
 
-local function buildWindow()
-	
-
-	local boxlayout = api.gui.layout.BoxLayout.new("VERTICAL");
- 
-	local busLinePanel = buildBusLinePanel()
-	boxlayout:addItem(busLinePanel.comp)
-	local bottomPanel =  api.gui.layout.BoxLayout.new("HORIZONTAL");
-	  
-
-	 
-	 
-	boxlayout:addItem(bottomPanel)
-	 
-    local window = api.gui.comp.Window.new(_('Bus Line Tool'), boxlayout)
-
-	 window:addHideOnCloseHandler()
-	 window:onClose(function() 
-		removeCircles()
-		guiState.isActive = false
-	 end)
-	api.gui.util.getGameUI():getMainRendererComponent():insertMouseListener(mouseListener)
-	guiState.window = window
-	return {
-		window = window,
-		refresh = function() 
-			xpcall(busLinePanel.refresh, err) 
-		 
-		end
-	}
+-- Loads an existing line into the working state so it can be edited: its stops become the
+-- selected entities, each tagged with the index of the stop it came from.
+local function loadLineForEdit(lineId)
+	removeCircles()
+	local loaded = lineEditor.load(lineId, lineManager)
+	guiState.editLine = { lineId = lineId, name = loaded.name, isTram = loaded.isTram, isCircle = loaded.isCircle, stopCount = loaded.stopCount }
+	guiState.isCircle = loaded.isCircle
+	for i, station in ipairs(loaded.stations) do
+		guiState.selectedEntities[i] = station
+		guiState.colours[i] = nextColour()
+		guiState.stopMeta[i] = { origIndex = i }
+	end
+	guiState.selectedRow = -1
+	guiState.needsRedrawRoute = true
+	guiState.isActive = true
+	guiState.ui.refreshStops()
 end
 
 local function createComponents()
-	local gameBar =  api.gui.util.getById("gameInfo.layout")
-	if not gameBar then 
-		return 
+	local gameBar = api.gui.util.getById("gameInfo.layout")
+	if not gameBar then
+		return
 	end
-	trace("bus_line_tool_script createComponents start, lua used memory=",api.util.getLuaUsedMemory())
-	local button = newButton(_('Bus Line Tool'))
-	button:setTooltip(_('Bus Line Tool'))
-    local window = buildWindow()
-		
+	local ui = windowModule.create({
+		guiState = guiState,
+		addWork = addWork,
+		err = err,
+		getPosition = getPosition,
+		removeCircle = removeCircle,
+		removeCircles = removeCircles,
+		updateCircle = updateCircle,
+		onBuild = function(param)
+			api.cmd.sendCommand(api.cmd.make.sendScriptEvent("bus_line_tool_script.lua", "createBusLine", "", param), standardCallback)
+		end,
+		onEditLoad = loadLineForEdit,
+		onEditApply = function(param)
+			api.cmd.sendCommand(api.cmd.make.sendScriptEvent("bus_line_tool_script.lua", "editBusLine", "", param), standardCallback)
+		end,
+		onLineListNeeded = function() return lineEditor.listLines(lineManager) end,
+		onNameNeeded = suggestedLineName,
+		colourDefault = function()
+			local colours = api.res.getBaseConfig().gui.lineColors
+			local c = colours[math.random(1, #colours)]
+			return { c[1], c[2], c[3] }
+		end,
+	})
+	guiState.ui = ui
+	ui.window:setVisible(false, false)
+	api.gui.util.getGameUI():getMainRendererComponent():insertMouseListener(mouseListener)
+	-- The window and the mouse listener now exist. Mark init done immediately so a failure in
+	-- the toolbar-button code below cannot make guiUpdate run createComponents a second time
+	-- and end up with two windows and two mouse listeners. (Also set at the end of the function.)
+	guiState.isInit = true
 
-    window.window:setVisible(false,false)
 	local icon = api.gui.comp.ImageView.new("ui/icons/windows/destinations@4x.tga")
-	trace("About to get layout")
-    local layout = api.gui.util.getById("mainButtonsLayout"):getItem(1):getLayout()
-	trace("Got layout")
-	icon:setMaximumSize(api.gui.util.Size.new(60,60))
-	icon:setMinimumSize(api.gui.util.Size.new(50,50))
-    local button = api.gui.comp.ToggleButton.new(icon )
-	button:setTooltip(_("Bus Line Tool!"))
-    button:setName("ConstructionMenuIndicator")
+	local layout = api.gui.util.getById("mainButtonsLayout"):getItem(1):getLayout()
+	icon:setMaximumSize(api.gui.util.Size.new(60, 60))
+	icon:setMinimumSize(api.gui.util.Size.new(50, 50))
+	local button = api.gui.comp.ToggleButton.new(icon)
+	button:setTooltip(_("Bus Line Tool"))
+	button:setName("ConstructionMenuIndicator")
 	layout:insertItem(button, 0)
-	button:onToggle(function (b) 
-		window.window:setVisible(b,false)
+	local vehiclesLoaded = false
+	button:onToggle(function(b)
+		ui.window:setVisible(b, false)
 		guiState.isActive = b
-		if b then 
+		if b then
 			local mainView = game.gui.getContentRect("mainView")
-			local y = math.floor(mainView[4]*(2/3)) 
-			local x = math.floor(mainView[3]/2) 
-			window.window:setPosition(x,y)
-			window.refresh()
-		else 
-			window.window:close()
-		end 
-		
-    end)
-	trace("bus_line_tool_script createComponents end, lua used memory=",api.util.getLuaUsedMemory())
+			ui.window:setPosition(math.floor(mainView[3] / 2), math.floor(mainView[4] * (2 / 3)))
+			if not vehiclesLoaded then
+				vehiclesLoaded = true
+				addWork(function() xpcall(ui.refreshVehicles, err) end) -- first (and only) vehicle discovery
+			end
+			pcall(ui.refreshLineList)
+			xpcall(ui.refreshStops, err)
+		else
+			ui.window:close()
+		end
+	end)
 	guiState.isInit = true
 end
 
@@ -738,7 +418,14 @@ function data()
 				guiState.isInit = true -- in case of exception don't keep trying
 			end
 			if guiState.isActive then 
-				xpcall(updateCircle, err)
+				-- An overlay failure would otherwise leave stale zones on the map with no hint why.
+				xpcall(updateCircle, function(x)
+					err(x)
+					pcall(overlay.clear)
+					if guiState.ui then
+						pcall(function() guiState.ui.setStatus(_("Overlay error: ") .. tostring(x)) end)
+					end
+				end)
 			end 
 			if #workItems > 0 then
 				xpcall(table.remove(workItems, #workItems), err)  
@@ -748,9 +435,17 @@ function data()
 			if src == "bus_line_tool_script.lua" and id == "createBusLine" then 
 				addWork(function() builder.createBusLine(param) end)
 			end 
+			if src == "bus_line_tool_script.lua" and id == "editBusLine" then
+				addWork(function()
+					lineEditor.applyEdit(param, {
+						builder = builder, util = util, routeBuilder = routeBuilder, paramHelper = paramHelper,
+						lineManager = lineManager, addWork = addWork, addDelayedWork = addDelayedWork, standardCallback = standardCallback,
+					})
+				end)
+			end
 		end
     }
 end
 
 
- 
+ 
